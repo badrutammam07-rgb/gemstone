@@ -1,0 +1,451 @@
+import React, { useState, useRef } from "react";
+import {
+  X,
+  Gem,
+  Sparkles,
+  Image as ImageIcon,
+  Ruler,
+  FileText,
+  Upload,
+  Camera,
+  ShieldCheck,
+  Maximize2,
+  Trash2,
+  Banknote,
+} from "lucide-react";
+import { CatalogItem } from "../types";
+import { compressImageFileToMax100KB } from "../utils/imageUtils";
+import {
+  formatRupiahNumber,
+  formatToRupiah,
+  parseRupiahNumber,
+  rupiahToTerbilang,
+} from "../utils/currencyUtils";
+
+interface Props {
+  userId: string;
+  isOpen: boolean;
+  onClose: () => void;
+  onCatalogSaved: (newItem: CatalogItem) => void;
+  onOpenFullscreen?: (data: { imageUrl: string; title: string; subtitle?: string; price?: string }) => void;
+}
+
+export const InputCatalogModal: React.FC<Props> = ({
+  userId,
+  isOpen,
+  onClose,
+  onCatalogSaved,
+  onOpenFullscreen,
+}) => {
+  const [gemType, setGemType] = useState("");
+  const [dimensions, setDimensions] = useState("");
+  const [price, setPrice] = useState("");
+  const [description, setDescription] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressedSizeKb, setCompressedSizeKb] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!isOpen) return null;
+
+  const sampleImages = [
+    "https://images.unsplash.com/photo-1617038260897-41a1f14a8ca0?auto=format&fit=crop&w=800&q=80",
+    "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80",
+    "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=800&q=80",
+    "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80",
+  ];
+
+  // Format price input on the fly with dot separator every 3 digits
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatRupiahNumber(e.target.value);
+    setPrice(formatted);
+  };
+
+  // Quick addition preset pills (e.g. +100rb, +1jt)
+  const handleAddQuickPrice = (addition: number) => {
+    const currentNum = parseRupiahNumber(price);
+    const newNum = currentNum + addition;
+    setPrice(formatRupiahNumber(newNum));
+  };
+
+  // Handle Stone Photo Upload from Device Media with auto-compression to max 100KB
+  const handleDeviceImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    const file = e.target.files[0];
+
+    if (!file.type.startsWith("image/")) {
+      setErrorMessage("Pilih berkas gambar yang valid (JPG, PNG, atau WebP).");
+      return;
+    }
+
+    setIsCompressing(true);
+    setErrorMessage(null);
+
+    try {
+      // Automatically compress stone photo to max 100KB while preserving optical quality
+      const compressed = await compressImageFileToMax100KB(file, 1280);
+      setImageUrl(compressed.dataUrl);
+      setCompressedSizeKb(compressed.sizeKb);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Gagal memproses dan mengompres foto batu.");
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    const numericPrice = parseRupiahNumber(price);
+    if (!gemType.trim() || !dimensions.trim() || !price.trim() || numericPrice <= 0) {
+      setErrorMessage("Mohon lengkapi Jenis Batu, Dimensi, dan Nominal Harga Rupiah yang valid.");
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const finalImg = imageUrl.trim()
+        ? imageUrl.trim()
+        : sampleImages[Math.floor(Math.random() * sampleImages.length)];
+
+      const finalPriceString = formatToRupiah(price); // "Rp 15.000.000"
+
+      const res = await fetch("/api/catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          gemType: gemType.trim(),
+          dimensions: dimensions.trim(),
+          price: finalPriceString,
+          description: description.trim(),
+          images: [finalImg],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Gagal menyimpan katalog.");
+      }
+
+      onCatalogSaved(data.catalog);
+      onClose();
+      // Reset form
+      setGemType("");
+      setDimensions("");
+      setPrice("");
+      setDescription("");
+      setImageUrl("");
+      setCompressedSizeKb(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Terjadi kesalahan pada server backend.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div
+      id="modal-input-catalog"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+    >
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl my-8 animate-fade-in">
+        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-emerald-500/20 rounded-xl text-emerald-400">
+              <Gem className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">Input Katalog Baru</h3>
+              <p className="text-xs text-slate-400">Simpan koleksi batu permata ke profil Anda</p>
+            </div>
+          </div>
+          <button
+            id="btn-close-input-catalog"
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white p-1 rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm">
+          {errorMessage && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs p-3 rounded-xl">
+              {errorMessage}
+            </div>
+          )}
+
+          {/* Jenis Batu */}
+          <div>
+            <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              Jenis Batu Mulia
+            </label>
+            <input
+              id="input-catalog-gemtype"
+              type="text"
+              value={gemType}
+              onChange={(e) => setGemType(e.target.value)}
+              placeholder="Contoh: Bacan Doko Kristal / Safir Biru Ceylon"
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              required
+            />
+          </div>
+
+          {/* Dimensi & Nominal Harga */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+                <Ruler className="w-3.5 h-3.5 text-teal-400" />
+                Dimensi (Panjang x Lebar x Tebal)
+              </label>
+              <input
+                id="input-catalog-dimensions"
+                type="text"
+                value={dimensions}
+                onChange={(e) => setDimensions(e.target.value)}
+                placeholder="Contoh: 18.5 x 14.0 x 8.2 mm"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-slate-300 font-semibold mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                  Nominal Harga (Rupiah)
+                </span>
+                {price && (
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                    Rp {price}
+                  </span>
+                )}
+              </label>
+
+              {/* Input Angka Rupiah dengan Titik Pemisah Ribuan Otomatis & Numpad Mobile */}
+              <div className="relative flex items-center">
+                <div className="absolute left-3 flex items-center pointer-events-none text-emerald-400 font-extrabold font-mono text-sm select-none border-r border-slate-700 pr-2">
+                  Rp
+                </div>
+                <input
+                  id="input-catalog-price"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9.]*"
+                  value={price}
+                  onChange={handlePriceChange}
+                  placeholder="0"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-12 pr-3.5 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono font-bold text-sm tracking-wide"
+                  required
+                />
+              </div>
+
+              {/* Tampilan Terbilang Kata Rupiah */}
+              {price && parseRupiahNumber(price) > 0 && (
+                <div className="mt-1.5 px-2.5 py-1 bg-emerald-950/50 border border-emerald-800/50 rounded-lg text-[11px] text-emerald-300 flex items-center justify-between shadow-sm">
+                  <span className="italic truncate" title={rupiahToTerbilang(parseRupiahNumber(price))}>
+                    {rupiahToTerbilang(parseRupiahNumber(price))}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPrice("")}
+                    className="text-[10px] text-slate-400 hover:text-red-400 ml-2 font-semibold shrink-0 cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+              )}
+
+              {/* Tombol Cepat Nominal Rupiah */}
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                {[
+                  { label: "+100 rb", val: 100000 },
+                  { label: "+500 rb", val: 500000 },
+                  { label: "+1 jt", val: 1000000 },
+                  { label: "+5 jt", val: 5000000 },
+                  { label: "+10 jt", val: 10000000 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleAddQuickPrice(preset.val)}
+                    className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono font-semibold px-2 py-0.5 rounded-md border border-slate-700/80 transition-colors cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Deskripsi */}
+          <div>
+            <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              Deskripsi & Karakter Permata
+            </label>
+            <textarea
+              id="input-catalog-description"
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Jelaskan kualitas giwang, warna kristal, memo lab (jika ada), ikatan ring perak/emas..."
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+            />
+          </div>
+
+          {/* Foto Permata dengan Unggah Media & Kompresi Otomatis Max 100KB */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-slate-300 font-semibold text-xs sm:text-sm flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+                Foto Batu Permata
+              </label>
+              <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" /> Auto Kompres Max 100 KB
+              </span>
+            </div>
+
+            {/* Hidden device file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleDeviceImageUpload}
+            />
+
+            {/* Upload Area / Image Preview */}
+            {imageUrl ? (
+              <div className="relative rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 p-2 flex items-center gap-3">
+                <div
+                  className="relative w-20 h-20 rounded-xl overflow-hidden shrink-0 cursor-pointer group bg-black"
+                  onClick={() => {
+                    if (onOpenFullscreen) {
+                      onOpenFullscreen({
+                        imageUrl,
+                        title: gemType || "Pratinjau Foto Batu Permata",
+                        subtitle: dimensions || undefined,
+                        price: price || undefined,
+                      });
+                    }
+                  }}
+                  title="Klik untuk melihat foto dalam tampilan penuh"
+                >
+                  <img
+                    src={imageUrl}
+                    alt="Pratinjau Batu"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <Maximize2 className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-bold text-white block truncate">
+                    Foto Berhasil Dipilih
+                  </span>
+                  {compressedSizeKb ? (
+                    <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1 mt-0.5">
+                      <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                      Ukuran: {compressedSizeKb} (Maks. 100 KB)
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-slate-400">Siap disimpan ke katalog</span>
+                  )}
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Klik gambar untuk melihat tampilan penuh
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                    title="Ganti Foto"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline">Ganti</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageUrl("");
+                      setCompressedSizeKb(null);
+                    }}
+                    className="bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Hapus Foto"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Hapus</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 bg-slate-950/60 hover:bg-slate-950 rounded-2xl p-4 text-center cursor-pointer transition-all group"
+              >
+                <div className="p-2.5 bg-emerald-500/10 group-hover:bg-emerald-500/20 text-emerald-400 rounded-full w-fit mx-auto mb-2 transition-colors">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <span className="text-xs font-bold text-slate-200 block group-hover:text-emerald-300 transition-colors">
+                  {isCompressing ? "Mengompres Foto (Maks 100 KB)..." : "Pilih / Ambil Foto dari Perangkat"}
+                </span>
+                <span className="text-[11px] text-slate-400 block mt-0.5">
+                  Mendukung kamera & galeri • Otomatis dikompresi max 100KB tanpa mengurangi kualitas
+                </span>
+              </div>
+            )}
+
+            {/* Alternatif Masukkan URL */}
+            <div className="pt-1">
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Atau masukkan URL gambar langsung (opsional):
+              </label>
+              <input
+                id="input-catalog-image"
+                type="url"
+                value={imageUrl.startsWith("data:") ? "" : imageUrl}
+                onChange={(e) => {
+                  setImageUrl(e.target.value);
+                  setCompressedSizeKb(null);
+                }}
+                placeholder="https://... (Kosongkan jika sudah memilih foto dari galeri)"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+            >
+              Batal
+            </button>
+            <button
+              id="btn-save-catalog"
+              type="submit"
+              disabled={isSaving}
+              className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold px-5 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-60 shadow-md shadow-emerald-950/40"
+            >
+              {isSaving ? "Menyimpan..." : "Save ke Profil"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};

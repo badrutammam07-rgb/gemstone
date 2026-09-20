@@ -1,0 +1,277 @@
+import React, { useState, useEffect } from "react";
+import { LoginView } from "./components/LoginView";
+import { RegisterView } from "./components/RegisterView";
+import { ForgotPasswordView } from "./components/ForgotPasswordView";
+import { HeaderNav } from "./components/HeaderNav";
+import { DashboardBeranda } from "./components/DashboardBeranda";
+import { ProfileView } from "./components/ProfileView";
+import { SettingsModal } from "./components/SettingsModal";
+import { ImageViewerModal } from "./components/ImageViewerModal";
+import { User } from "./types";
+import { CheckCircle2 } from "lucide-react";
+
+export default function App() {
+  // Navigation states: "login" (first page), "register", "forgot_password", "main"
+  const [currentAuthView, setCurrentAuthView] = useState<"login" | "register" | "forgot_password">("login");
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // Main app tab state: "beranda" | "profile"
+  const [mainView, setMainView] = useState<"beranda" | "profile">("beranda");
+  const [viewingUserId, setViewingUserId] = useState<string | undefined>(undefined);
+
+  // Settings modal state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Lightbox / Fullscreen Image viewer state for gemstone catalogs (avatars are excluded)
+  const [fullscreenImage, setFullscreenImage] = useState<{
+    imageUrl: string;
+    title?: string;
+    dimensions?: string;
+    price?: string;
+    sellerName?: string;
+  } | null>(null);
+
+  const [systemNotice, setSystemNotice] = useState<string | null>(null);
+
+  // Check if session exists in storage and verify with backend database
+  useEffect(() => {
+    try {
+      const savedUser = localStorage.getItem("komunitas_batu_mulia_user");
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.id) {
+          // Verifikasi ke database server apakah akun masih ada
+          fetch(`/api/users/${parsed.id}`)
+            .then((res) => {
+              if (res.ok) return res.json();
+              throw new Error("Akun tidak ditemukan di database");
+            })
+            .then((data) => {
+              if (data.success && data.user) {
+                setCurrentUser(data.user);
+                localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(data.user));
+              } else {
+                localStorage.removeItem("komunitas_batu_mulia_user");
+                setCurrentUser(null);
+              }
+            })
+            .catch(() => {
+              // Akun telah terhapus dari database atau akun dummy lama
+              localStorage.removeItem("komunitas_batu_mulia_user");
+              setCurrentUser(null);
+            });
+          return;
+        }
+      }
+      localStorage.removeItem("komunitas_batu_mulia_user");
+      setCurrentUser(null);
+    } catch {
+      localStorage.removeItem("komunitas_batu_mulia_user");
+      setCurrentUser(null);
+    }
+  }, []);
+
+  const handleLoginSuccess = (user: User) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(user));
+    } catch {}
+    setMainView("beranda");
+    setViewingUserId(undefined);
+  };
+
+  const handleRegisterSuccess = (user: User) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(user));
+    } catch {}
+    setMainView("beranda");
+    setViewingUserId(undefined);
+    setSystemNotice(`Akun ${user.username} berhasil dibuat & tersimpan di database real!`);
+    setTimeout(() => setSystemNotice(null), 5000);
+  };
+
+  const handlePasswordResetSuccess = (username: string) => {
+    setCurrentAuthView("login");
+    setSystemNotice(`Password untuk ${username} berhasil diperbarui! Silakan login.`);
+    setTimeout(() => setSystemNotice(null), 6000);
+  };
+
+  const handleAccountDeleted = (deletedUsername: string) => {
+    setIsSettingsOpen(false);
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem("komunitas_batu_mulia_user");
+    } catch {}
+    setCurrentAuthView("register");
+    setSystemNotice(`Akun "${deletedUsername}" telah berhasil dihapus secara permanen dari database. Silakan buat akun baru secara real.`);
+    setTimeout(() => setSystemNotice(null), 8000);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem("komunitas_batu_mulia_user");
+    } catch {}
+    setCurrentAuthView("login");
+    setIsSettingsOpen(false);
+  };
+
+  // If user is logged in, render the main authenticated application
+  if (currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+        {/* Header containing User Photo, Username, Followers/Following, Search, Settings Gear & Logout Door */}
+        <HeaderNav
+          currentUser={currentUser}
+          activeView={mainView}
+          onSelectView={(view) => {
+            setMainView(view);
+            if (view === "profile") {
+              setViewingUserId(currentUser.id);
+            }
+          }}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onLogout={handleLogout}
+          onSelectOtherUser={(userId) => {
+            setViewingUserId(userId);
+            setMainView("profile");
+          }}
+        />
+
+        {/* System Notice Toast */}
+        {systemNotice && (
+          <div className="max-w-md mx-auto w-full px-4 pt-4 z-20">
+            <div className="bg-emerald-600 text-white text-xs font-semibold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{systemNotice}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Main Body: Dashboard Beranda vs Profile View */}
+        <main className="flex-1">
+          {mainView === "beranda" ? (
+            <DashboardBeranda
+              currentUser={currentUser}
+              onSelectUser={(userId) => {
+                setViewingUserId(userId);
+                setMainView("profile");
+              }}
+              onNavigateToProfile={() => {
+                setViewingUserId(currentUser.id);
+                setMainView("profile");
+              }}
+              onOpenFullscreen={(data) => setFullscreenImage(data)}
+            />
+          ) : (
+            <ProfileView
+              currentUser={currentUser}
+              viewingUserId={viewingUserId || currentUser.id}
+              onBackToBeranda={() => setMainView("beranda")}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenFullscreen={(data) => setFullscreenImage(data)}
+              onRefreshCurrentUser={(updated) => {
+                setCurrentUser(updated);
+                try {
+                  localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(updated));
+                } catch {}
+              }}
+            />
+          )}
+        </main>
+
+        {/* Modal Settings (Gear icon) */}
+        {isSettingsOpen && (
+          <SettingsModal
+            user={currentUser}
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            onProfileUpdated={(updated) => {
+              setCurrentUser(updated);
+              try {
+                localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(updated));
+              } catch {}
+              setSystemNotice("Pengaturan profil berhasil diperbarui!");
+              setTimeout(() => setSystemNotice(null), 4000);
+            }}
+            onAccountDeleted={handleAccountDeleted}
+          />
+        )}
+
+        {/* Fullscreen Image Lightbox Viewer (Hanya untuk foto batu/katalog, foto profil tidak dapat dilihat penuh) */}
+        <ImageViewerModal
+          isOpen={!!fullscreenImage}
+          imageUrl={fullscreenImage?.imageUrl || null}
+          title={fullscreenImage?.title}
+          dimensions={fullscreenImage?.dimensions}
+          price={fullscreenImage?.price}
+          sellerName={fullscreenImage?.sellerName}
+          onClose={() => setFullscreenImage(null)}
+        />
+      </div>
+    );
+  }
+
+  // Unauthenticated Auth views: Login (First page), Register, Forgot Password
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans selection:bg-emerald-500 selection:text-white">
+      {/* Background ambient lighting */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 -right-40 w-96 h-96 bg-teal-600/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-emerald-800/10 rounded-full blur-3xl" />
+      </div>
+
+      {/* Top Banner Notice */}
+      {systemNotice && (
+        <div className="max-w-md mx-auto w-full mb-4 z-20">
+          <div className="bg-emerald-600 text-white text-xs font-semibold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-fade-in">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{systemNotice}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Main Form Views */}
+      <div className="my-auto z-10 w-full py-6">
+        {currentAuthView === "login" && (
+          <LoginView
+            onLoginSuccess={handleLoginSuccess}
+            onNavigateToRegister={() => {
+              setCurrentAuthView("register");
+            }}
+            onNavigateToForgotPassword={() => {
+              setCurrentAuthView("forgot_password");
+            }}
+          />
+        )}
+
+        {currentAuthView === "register" && (
+          <RegisterView
+            onRegisterSuccess={handleRegisterSuccess}
+            onNavigateToLogin={() => {
+              setCurrentAuthView("login");
+            }}
+          />
+        )}
+
+        {currentAuthView === "forgot_password" && (
+          <ForgotPasswordView
+            onNavigateToLogin={() => {
+              setCurrentAuthView("login");
+            }}
+            onPasswordResetSuccess={handlePasswordResetSuccess}
+          />
+        )}
+      </div>
+
+      {/* Footer */}
+      <footer className="text-center text-xs text-slate-500 py-4 z-10">
+        <p>
+          Komunitas Pecinta Batu Mulia Nusantara • Platform Jual Beli & Edukasi
+        </p>
+      </footer>
+    </div>
+  );
+}

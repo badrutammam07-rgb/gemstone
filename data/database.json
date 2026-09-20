@@ -1,0 +1,17 @@
+{
+  "users": [
+    {
+      "id": "user-1789814622530",
+      "username": "omdru gems",
+      "phone": "0816988848",
+      "password": "123456",
+      "role": "Anggota Komunitas Batu Mulia",
+      "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "bio": "Pecinta batu mulia baru bergabung di Komunitas.",
+      "followers": [],
+      "following": [],
+      "joinDate": "Baru saja"
+    }
+  ],
+  "catalogs": []
+}
