@@ -109,9 +109,26 @@ export const InputCatalogModal: React.FC<Props> = ({
     setIsSaving(true);
 
     try {
-      const finalImg = imageUrl.trim()
+      let finalImg = imageUrl.trim()
         ? imageUrl.trim()
         : sampleImages[Math.floor(Math.random() * sampleImages.length)];
+
+      // Upload to Cloudinary if it's a freshly chosen base64 image
+      if (finalImg.startsWith("data:")) {
+        try {
+          const uploadRes = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: finalImg, folder: "katalog" }),
+          });
+          const uploadData = await uploadRes.json();
+          if (uploadData && uploadData.url) {
+            finalImg = uploadData.url;
+          }
+        } catch (uploadErr) {
+          console.warn("[Cloudinary] Upload warning, using local source:", uploadErr);
+        }
+      }
 
       const finalPriceString = formatToRupiah(price); // "Rp 15.000.000"
 

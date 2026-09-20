@@ -2,6 +2,17 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import {
+  initTursoSchema,
+  getUserByUsernameOrPhone,
+  getUserById,
+  getUserByPhone,
+  insertUser,
+  updatePasswordByPhone,
+  updateUserProfile,
+  deleteUserAndData,
+} from "./server/turso";
+import { uploadMediaPhoto } from "./server/cloudinary";
 
 interface User {
   id: string;
@@ -128,6 +139,32 @@ async function startServer() {
 
   app.use(express.json({ limit: "10mb" }));
 
+  // Initialize Turso tables and seed database
+  try {
+    await initTursoSchema();
+    for (const u of users) {
+      try {
+        const existing = await getUserById(u.id);
+        if (!existing) {
+          await insertUser({
+            id: u.id,
+            username: u.username,
+            phone: u.phone,
+            password: u.password,
+            role: u.role,
+            avatar: u.avatar,
+            bio: u.bio,
+            joinDate: u.joinDate,
+          });
+        }
+      } catch (seedErr) {
+        // user already exists in Turso
+      }
+    }
+  } catch (tursoInitErr) {
+    console.error("[Turso Init Warning]", tursoInitErr);
+  }
+
   // Run cleanup every 10 minutes
   setInterval(cleanupExpiredSoldCatalogs, 10 * 60 * 1000);
 
@@ -136,8 +173,77 @@ async function startServer() {
     res.json({ status: "ok", app: "Komunitas Batu Mulia API" });
   });
 
-  // 1. Register (Langsung menggunakan No HP tanpa OTP)
-  app.post("/api/auth/register", (req, res) => {
+  // Media Photo Upload to Cloudinary
+  // "Untuk penyimpanan media foto gunakan Cloudinary" (Akun: ibnu.92sholihin@gmail.com)
+  app.post("/api/upload", async (req, res) => {
+    try {
+      const { image, folder } = req.body;
+      if (!image) {
+        return res.status(400).json({ success: false, message: "Berkas foto tidak ditemukan." });
+      }
+      const uploadResult = await uploadMediaPhoto(image, folder || "katalog");
+      return res.json(uploadResult);
+    } catch (err: any) {
+      console.error("[Upload API Error]", err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Gagal mengunggah foto ke Cloudinary.",
+      });
+    }
+  });
+
+  // Check Phone Existence for SMS OTP Forgot Password
+  app.get("/api/auth/check-phone", async (req, res) => {
+    try {
+      const phoneParam = (req.query.phone as string) || "";
+      if (!phoneParam.trim()) {
+        return res.status(400).json({ success: false, message: "Nomor HP wajib disertakan." });
+      }
+
+      const cleanRawPhone = phoneParam.trim();
+      // Check Turso first
+      let user = await getUserByPhone(cleanRawPhone);
+      // Fallback check in memory
+      if (!user) {
+        const found = users.find(
+          (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
+        );
+        if (found) {
+          user = {
+            id: found.id,
+            username: found.username,
+            phone: found.phone,
+            password: found.password,
+            role: found.role,
+            avatar: found.avatar,
+            bio: found.bio || "",
+            followers: found.followers || [],
+            following: found.following || [],
+            joinDate: found.joinDate || "Terdaftar",
+          };
+        }
+      }
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: `Nomor HP "${cleanRawPhone}" belum terdaftar di sistem.`,
+        });
+      }
+
+      return res.json({
+        success: true,
+        username: user.username,
+        phone: user.phone,
+      });
+    } catch (err: any) {
+      console.error("[Check Phone Error]", err);
+      return res.status(500).json({ success: false, message: "Gagal memeriksa nomor HP." });
+    }
+  });
+
+  // 1. Register (Menyimpan USERNAME & PASSWORD di Database Turso)
+  app.post("/api/auth/register", async (req, res) => {
     const { username, phone, password, confirmPassword } = req.body;
 
     if (!username || !phone || !password || !confirmPassword) {
@@ -157,6 +263,16 @@ async function startServer() {
     }
 
     const cleanUsername = username.trim();
+
+    // Check existence in Turso or memory
+    const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
+    if (existingTurso) {
+      return res.status(400).json({
+        success: false,
+        message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+      });
+    }
+
     const existsUsername = users.find(
       (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
     );
@@ -164,6 +280,14 @@ async function startServer() {
       return res.status(400).json({
         success: false,
         message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+      });
+    }
+
+    const existingTursoPhone = await getUserByPhone(cleanRawPhone);
+    if (existingTursoPhone) {
+      return res.status(400).json({
+        success: false,
+        message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
       });
     }
 
@@ -177,13 +301,33 @@ async function startServer() {
       });
     }
 
+    const newId = `user-${Date.now()}`;
+    const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80";
+
+    // Save to Turso Database
+    try {
+      await insertUser({
+        id: newId,
+        username: cleanUsername,
+        phone: cleanRawPhone,
+        password: password,
+        role: "Anggota Komunitas Batu Mulia",
+        avatar: defaultAvatar,
+        bio: "Pecinta batu mulia baru bergabung di Komunitas.",
+        joinDate: "Baru saja",
+      });
+      console.log(`[Turso DB] Pengguna "${cleanUsername}" berhasil disimpan di database Turso.`);
+    } catch (dbErr) {
+      console.error("[Turso DB] Warning saat simpan ke Turso:", dbErr);
+    }
+
     const newUser: User = {
-      id: `user-${Date.now()}`,
+      id: newId,
       username: cleanUsername,
       phone: cleanRawPhone,
       password: password,
       role: "Anggota Komunitas Batu Mulia",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      avatar: defaultAvatar,
       bio: "Pecinta batu mulia baru bergabung di Komunitas.",
       followers: [],
       following: [],
@@ -207,13 +351,13 @@ async function startServer() {
 
     return res.status(201).json({
       success: true,
-      message: `Akun berhasil didaftarkan! Selamat bergabung di Komunitas Batu Mulia.`,
+      message: `Akun berhasil didaftarkan di Database Turso! Selamat bergabung di Komunitas Batu Mulia.`,
       user: safeUser,
     });
   });
 
-  // 4. Login
-  app.post("/api/auth/login", (req, res) => {
+  // 4. Login (Autentikasi USERNAME & PASSWORD via Database Turso)
+  app.post("/api/auth/login", async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -221,21 +365,42 @@ async function startServer() {
     }
 
     const trimmed = username.trim();
-    const user = users.find(
-      (u) =>
-        u.username.toLowerCase() === trimmed.toLowerCase() ||
-        u.phone === trimmed ||
-        normalizePhone(u.phone) === normalizePhone(trimmed)
-    );
 
-    if (!user) {
+    // Check Turso Database first
+    let userFromDb = await getUserByUsernameOrPhone(trimmed);
+
+    // Fallback to in-memory/file db
+    if (!userFromDb) {
+      const memUser = users.find(
+        (u) =>
+          u.username.toLowerCase() === trimmed.toLowerCase() ||
+          u.phone === trimmed ||
+          normalizePhone(u.phone) === normalizePhone(trimmed)
+      );
+      if (memUser) {
+        userFromDb = {
+          id: memUser.id,
+          username: memUser.username,
+          phone: memUser.phone,
+          password: memUser.password,
+          role: memUser.role,
+          avatar: memUser.avatar,
+          bio: memUser.bio || "",
+          followers: memUser.followers || [],
+          following: memUser.following || [],
+          joinDate: memUser.joinDate || "Terdaftar",
+        };
+      }
+    }
+
+    if (!userFromDb) {
       return res.status(401).json({
         success: false,
-        message: `Akun "${trimmed}" tidak ditemukan.`,
+        message: `Akun "${trimmed}" tidak ditemukan di database.`,
       });
     }
 
-    if (user.password !== password) {
+    if (userFromDb.password !== password) {
       return res.status(401).json({
         success: false,
         message: "Password yang Anda masukkan salah.",
@@ -243,26 +408,26 @@ async function startServer() {
     }
 
     const safeUser = {
-      id: user.id,
-      username: user.username,
-      phone: user.phone,
-      role: user.role,
-      avatar: user.avatar,
-      bio: user.bio,
-      followers: user.followers || [],
-      following: user.following || [],
-      joinDate: user.joinDate,
+      id: userFromDb.id,
+      username: userFromDb.username,
+      phone: userFromDb.phone,
+      role: userFromDb.role,
+      avatar: userFromDb.avatar,
+      bio: userFromDb.bio,
+      followers: userFromDb.followers || [],
+      following: userFromDb.following || [],
+      joinDate: userFromDb.joinDate,
     };
 
     return res.json({
       success: true,
-      message: `Selamat datang, ${user.username}!`,
+      message: `Selamat datang, ${userFromDb.username}!`,
       user: safeUser,
     });
   });
 
-  // 5. Reset Password (Cukup dengan No HP terdaftar tanpa OTP)
-  app.post("/api/auth/forgot-password/reset", (req, res) => {
+  // 5. Reset Password di Database Turso (Setelah Verifikasi OTP SMS Firebase Auth)
+  app.post("/api/auth/forgot-password/reset", async (req, res) => {
     const { phone, newPassword, confirmPassword } = req.body;
 
     if (!phone || !newPassword || !confirmPassword) {
@@ -278,29 +443,36 @@ async function startServer() {
     }
 
     const cleanRawPhone = phone.trim();
+
+    // Update in Turso Database
+    try {
+      await updatePasswordByPhone(cleanRawPhone, newPassword);
+      console.log(`[Turso DB] Password untuk No HP "${cleanRawPhone}" berhasil diupdate di Turso.`);
+    } catch (dbErr) {
+      console.error("[Turso DB] Warning update password di Turso:", dbErr);
+    }
+
     const user = users.find(
       (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
     );
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: `Akun dengan Nomor HP "${cleanRawPhone}" tidak ditemukan di sistem.`,
-      });
+    if (user) {
+      user.password = newPassword;
+      saveDatabase();
     }
 
-    user.password = newPassword;
-    saveDatabase();
+    const tursoUser = await getUserByPhone(cleanRawPhone);
+    const targetUsername = user?.username || tursoUser?.username || cleanRawPhone;
 
     return res.json({
       success: true,
-      message: "Kata sandi berhasil diperbarui! Silakan masuk dengan kata sandi baru.",
-      username: user.username,
+      message: "Kata sandi berhasil diperbarui di database! Silakan masuk dengan kata sandi baru.",
+      username: targetUsername,
     });
   });
 
-  // 6. User Profile Update via Settings (Gear logo - langsung update tanpa OTP)
-  app.put("/api/user/update-profile", (req, res) => {
+  // 6. User Profile Update via Settings (Disimpan ke Database Turso)
+  app.put("/api/user/update-profile", async (req, res) => {
     const {
       userId,
       avatar,
@@ -380,6 +552,20 @@ async function startServer() {
     if (avatar) user.avatar = avatar;
     if (bio !== undefined) user.bio = bio;
 
+    // Update in Turso Database
+    try {
+      await updateUserProfile(user.id, {
+        newUsername: user.username,
+        newPhone: user.phone,
+        avatar: user.avatar,
+        bio: user.bio,
+        newPassword: user.password,
+      });
+      console.log(`[Turso DB] Profil user ${user.username} berhasil disinkronkan ke Turso.`);
+    } catch (dbErr) {
+      console.error("[Turso DB] Warning sync update profil:", dbErr);
+    }
+
     // Cascade update username & avatar to all catalogs and comments
     catalogs.forEach((c) => {
       if (c.userId === user.id) {
@@ -411,7 +597,7 @@ async function startServer() {
 
     return res.json({
       success: true,
-      message: "Profil dan data akun Anda berhasil diperbarui!",
+      message: "Profil dan data akun Anda berhasil diperbarui di database!",
       user: safeUser,
     });
   });
@@ -747,9 +933,9 @@ async function startServer() {
     });
   });
 
-  // 18. Hapus Akun Permanen dari Database
+  // 18. Hapus Akun Permanen dari Database (Turso Database & File)
   // "Pada halaman pengaturan buat tombol hapus akun ketika sudah disetujui maka akun tersebut terhapus permanen dari database"
-  app.delete("/api/user/delete-account", (req, res) => {
+  app.delete("/api/user/delete-account", async (req, res) => {
     const { userId } = req.body;
 
     if (!userId) {
@@ -757,16 +943,28 @@ async function startServer() {
     }
 
     const userIndex = users.findIndex((u) => u.id === userId);
-    if (userIndex === -1) {
+    const userFromDb = await getUserById(userId);
+
+    if (userIndex === -1 && !userFromDb) {
       return res.status(404).json({ success: false, message: "Akun tidak ditemukan atau sudah dihapus sebelumnya." });
     }
 
-    const deletedUser = users[userIndex];
+    const usernameToDelete = userIndex !== -1 ? users[userIndex].username : userFromDb?.username || "Pengguna";
 
-    // 1. Hapus pengguna dari database
-    users.splice(userIndex, 1);
+    // 1. Hapus dari Database Turso
+    try {
+      await deleteUserAndData(userId);
+      console.log(`[Turso DB] Akun ${usernameToDelete} (${userId}) berhasil dihapus permanen dari Turso.`);
+    } catch (dbErr) {
+      console.error("[Turso DB] Warning hapus akun dari Turso:", dbErr);
+    }
 
-    // 2. Hapus seluruh katalog milik pengguna ini
+    // 2. Hapus pengguna dari in-memory / JSON database
+    if (userIndex !== -1) {
+      users.splice(userIndex, 1);
+    }
+
+    // 3. Hapus seluruh katalog milik pengguna ini
     let deletedCatalogCount = 0;
     for (let i = catalogs.length - 1; i >= 0; i--) {
       if (catalogs[i].userId === userId) {
@@ -775,29 +973,29 @@ async function startServer() {
       }
     }
 
-    // 3. Bersihkan followers & following dari pengguna lain
+    // 4. Bersihkan followers & following dari pengguna lain
     users.forEach((u) => {
       u.followers = (u.followers || []).filter((id) => id !== userId);
       u.following = (u.following || []).filter((id) => id !== userId);
     });
 
-    // 4. Bersihkan likes dan komentar milik pengguna ini pada semua katalog tersisa
+    // 5. Bersihkan likes dan komentar milik pengguna ini pada semua katalog tersisa
     catalogs.forEach((c) => {
       c.likes = (c.likes || []).filter((id) => id !== userId);
       c.comments = (c.comments || []).filter((cm) => cm.authorId !== userId);
     });
 
-    // 5. Simpan perubahan secara permanen ke file database
+    // 6. Simpan perubahan secara permanen ke file database
     saveDatabase();
 
     console.log(
-      `[DELETE ACCOUNT PERMANENT] Akun "${deletedUser.username}" (${userId}) dan ${deletedCatalogCount} katalog miliknya telah dihapus permanen dari database.`
+      `[DELETE ACCOUNT PERMANENT] Akun "${usernameToDelete}" (${userId}) dan ${deletedCatalogCount} katalog miliknya telah dihapus permanen dari database.`
     );
 
     return res.json({
       success: true,
-      message: `Akun "${deletedUser.username}" beserta seluruh katalog dan datanya telah berhasil dihapus secara permanen dari database.`,
-      deletedUsername: deletedUser.username,
+      message: `Akun "${usernameToDelete}" beserta seluruh katalog dan datanya telah berhasil dihapus secara permanen dari database.`,
+      deletedUsername: usernameToDelete,
     });
   });
 

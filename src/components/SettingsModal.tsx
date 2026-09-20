@@ -114,12 +114,31 @@ export const SettingsModal: React.FC<Props> = ({
     setIsSaving(true);
 
     try {
+      let finalAvatar = avatar;
+
+      // Upload to Cloudinary if it's a data URL
+      if (finalAvatar && finalAvatar.startsWith("data:")) {
+        try {
+          const upRes = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: finalAvatar, folder: "avatar" }),
+          });
+          const upData = await upRes.json();
+          if (upData && upData.url) {
+            finalAvatar = upData.url;
+          }
+        } catch (upErr) {
+          console.warn("[Cloudinary] Upload avatar warning:", upErr);
+        }
+      }
+
       const res = await fetch("/api/user/update-profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
-          avatar,
+          avatar: finalAvatar,
           bio: bio.trim(),
           newUsername: newUsername.trim(),
           newPhone: newPhone.trim(),
