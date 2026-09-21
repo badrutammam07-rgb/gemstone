@@ -25,6 +25,7 @@ interface Props {
   catalog: CatalogItem;
   currentUser: User;
   onOfferSuccess: (updatedCatalog: CatalogItem, offer: NegotiationOffer) => void;
+  onCheckout?: (catalogId: string, offerId: string) => void;
 }
 
 export const NegotiateModal: React.FC<Props> = ({
@@ -33,6 +34,7 @@ export const NegotiateModal: React.FC<Props> = ({
   catalog,
   currentUser,
   onOfferSuccess,
+  onCheckout,
 }) => {
   const [offerPriceRaw, setOfferPriceRaw] = useState("");
   const [note, setNote] = useState("");
@@ -276,6 +278,48 @@ export const NegotiateModal: React.FC<Props> = ({
                     Atau jika masih ingin menawar ulang, Anda dapat mengisi nominal baru pada formulir di bawah.
                   </p>
                 </div>
+              ) : existingOffer.status === "accepted" ? (
+                <div className="bg-emerald-950/70 border-2 border-emerald-500 rounded-2xl p-4 text-xs space-y-3 shadow-lg animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-emerald-300 flex items-center gap-1.5 text-xs sm:text-sm">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      Kesepakatan Harga Tercapai!
+                    </span>
+                    <span className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                      SIAP CEKOUT
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-950/80 p-3 rounded-xl border border-emerald-800/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-slate-400 text-[11px] block">Nominal Disepakati:</span>
+                      <span className="font-mono font-black text-emerald-400 text-base sm:text-lg">
+                        {existingOffer.acceptedPrice || existingOffer.counterPrice || existingOffer.offerPrice}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-300">
+                      Penjual: <strong>@{catalog.username}</strong>
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-emerald-200 leading-relaxed">
+                    Harga negosiasi telah disepakati! Jika Anda serius membeli, silakan klik tombol <strong>Cekout Transaksi</strong> di bawah. Sistem akan otomatis membuatkan Room Transaksi privat berproteksi Face ID & GPS akurat.
+                  </p>
+
+                  {onCheckout && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onCheckout(catalog.id, existingOffer.id);
+                        onClose();
+                      }}
+                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm py-3 rounded-xl transition-all shadow-lg shadow-emerald-900/50 flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01]"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>CEKOUT & BUAT ROOM TRANSAKSI AMAN</span>
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-3 text-xs text-amber-200 flex items-center justify-between">
                   <div>
@@ -284,7 +328,7 @@ export const NegotiateModal: React.FC<Props> = ({
                       {existingOffer.offerPrice}
                     </span>
                     <span className="ml-2 text-[10px] bg-amber-900/60 px-2 py-0.5 rounded-md text-amber-200 border border-amber-700/50">
-                      Status: {existingOffer.status === "accepted" ? "Disepakati" : "Menunggu Tanggapan Penjual"}
+                      Status: Menunggu Tanggapan Penjual
                     </span>
                   </div>
                 </div>

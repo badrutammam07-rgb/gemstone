@@ -50,6 +50,7 @@ interface Props {
     dimensions?: string;
     price?: string;
   }) => void;
+  onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
 }
 
 export const ProfileView: React.FC<Props> = ({
@@ -59,6 +60,7 @@ export const ProfileView: React.FC<Props> = ({
   onRefreshCurrentUser,
   onOpenSettings,
   onOpenFullscreen,
+  onOpenTransactionRoom,
 }) => {
   const isOwnProfile = !viewingUserId || viewingUserId === currentUser.id;
   const targetUserId = viewingUserId || currentUser.id;
@@ -834,6 +836,11 @@ export const ProfileView: React.FC<Props> = ({
             setActionNotice("Penawaran Anda berhasil dikirim ke penjual secara privat.");
             setTimeout(() => setActionNotice(null), 5000);
           }}
+          onCheckout={(catalogId, offerId) => {
+            if (onOpenTransactionRoom) {
+              onOpenTransactionRoom({ catalogId, offerId });
+            }
+          }}
         />
       )}
 
@@ -850,6 +857,11 @@ export const ProfileView: React.FC<Props> = ({
             );
             if (viewingOffersCatalog && viewingOffersCatalog.id === updatedCatalog.id) {
               setViewingOffersCatalog(updatedCatalog);
+            }
+          }}
+          onOpenRoom={(catalogId, offerId) => {
+            if (onOpenTransactionRoom) {
+              onOpenTransactionRoom({ catalogId, offerId });
             }
           }}
         />

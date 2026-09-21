@@ -67,3 +67,57 @@ export interface CatalogItem {
   createdAt: string;
   offers?: NegotiationOffer[]; // Daftar penawaran harga privat
 }
+
+export interface FaceIdVerification {
+  verified: boolean;
+  facePhotoUrl: string; // Foto wajah jelas hasil scan kamera / face id
+  verifiedAt: number;
+}
+
+export interface GpsVerification {
+  verified: boolean;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  locationName: string; // Nama wilayah / kota hasil deteksi GPS akurat
+  verifiedAt: number;
+}
+
+export interface PartyVerification {
+  userId: string;
+  username: string;
+  userAvatar: string;
+  userPhone?: string;
+  faceId?: FaceIdVerification;
+  gps?: GpsVerification;
+  isFullyVerified: boolean; // Bernilai true HANYA jika Face ID DAN GPS Akurat keduanya sudah aktif
+}
+
+export interface RoomChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  content: string;
+  createdAt: string;
+  timestamp: number;
+}
+
+export interface TransactionRoom {
+  id: string;
+  catalogId: string;
+  offerId: string;
+  gemType: string;
+  dimensions: string;
+  gemImage: string;
+  videoUrl?: string;
+  agreedPrice: string; // Nominal harga atas kesepakatan negosiasi
+  seller: PartyVerification;
+  buyer: PartyVerification;
+  status: "pending_verification" | "active" | "expired";
+  createdAt: number;
+  lastActivityAt: number; // Waktu komunikasi terakhir, otomatis reset tiap ada chat baru
+  expiresAt: number;      // lastActivityAt + 7 hari (otomatis terhapus jika 1 minggu tidak aktif)
+  messages: RoomChatMessage[];
+}
+

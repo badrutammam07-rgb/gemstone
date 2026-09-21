@@ -43,6 +43,7 @@ interface Props {
     price?: string;
     sellerName?: string;
   }) => void;
+  onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
 }
 
 export const DashboardBeranda: React.FC<Props> = ({
@@ -50,6 +51,7 @@ export const DashboardBeranda: React.FC<Props> = ({
   onSelectUser,
   onNavigateToProfile,
   onOpenFullscreen,
+  onOpenTransactionRoom,
 }) => {
   const [catalogs, setCatalogs] = useState<CatalogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -619,9 +621,31 @@ export const DashboardBeranda: React.FC<Props> = ({
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Tombol Negosiasi / Tawar Harga untuk Calon Pembeli */}
+                    {/* Tombol Negosiasi / Cekout untuk Calon Pembeli */}
                     {!isSold && !isOwner && (() => {
                       const myOffer = item.offers?.find((o) => o.buyerId === currentUser.id);
+                      const isAccepted = myOffer?.status === "accepted";
+
+                      if (isAccepted) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onOpenTransactionRoom) {
+                                onOpenTransactionRoom({ catalogId: item.id, offerId: myOffer.id });
+                              } else {
+                                setNegotiatingCatalog(item);
+                              }
+                            }}
+                            className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs px-3.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/40 cursor-pointer animate-pulse"
+                            title="Harga telah disepakati! Klik untuk cekout dan buka room transaksi"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Cekout & Masuk Room</span>
+                          </button>
+                        );
+                      }
+
                       return (
                         <button
                           type="button"
@@ -636,17 +660,40 @@ export const DashboardBeranda: React.FC<Props> = ({
                     })()}
 
                     {/* Tombol Daftar Tawaran untuk Penjual */}
-                    {!isSold && isOwner && (item.offers || []).length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setViewingOffersCatalog(item)}
-                        className="bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-                        title="Lihat seluruh daftar penawaran dari calon pembeli"
-                      >
-                        <Handshake className="w-3.5 h-3.5" />
-                        <span>Tawaran ({(item.offers || []).length})</span>
-                      </button>
-                    )}
+                    {!isSold && isOwner && (item.offers || []).length > 0 && (() => {
+                      const hasAcceptedOffer = (item.offers || []).some((o) => o.status === "accepted");
+                      const acceptedOffer = (item.offers || []).find((o) => o.status === "accepted");
+
+                      return (
+                        <div className="flex items-center gap-1.5">
+                          {hasAcceptedOffer && acceptedOffer && onOpenTransactionRoom && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onOpenTransactionRoom({
+                                  catalogId: item.id,
+                                  offerId: acceptedOffer.id,
+                                })
+                              }
+                              className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                              title="Buka Room Transaksi atas kesepakatan harga"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              <span>Room Transaksi</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setViewingOffersCatalog(item)}
+                            className="bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                            title="Lihat seluruh daftar penawaran dari calon pembeli"
+                          >
+                            <Handshake className="w-3.5 h-3.5" />
+                            <span>Tawaran ({(item.offers || []).length})</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     {/* Tombol Sundul (jika postingan milik current user) */}
                     {isOwner && !isSold && (
@@ -906,6 +953,11 @@ export const DashboardBeranda: React.FC<Props> = ({
           catalog={negotiatingCatalog}
           currentUser={currentUser}
           onOfferSuccess={handleOfferSuccess}
+          onCheckout={(catalogId, offerId) => {
+            if (onOpenTransactionRoom) {
+              onOpenTransactionRoom({ catalogId, offerId });
+            }
+          }}
         />
       )}
 
@@ -917,6 +969,11 @@ export const DashboardBeranda: React.FC<Props> = ({
           catalog={viewingOffersCatalog}
           sellerId={currentUser.id}
           onRespondOffer={handleRespondOffer}
+          onOpenRoom={(catalogId, offerId) => {
+            if (onOpenTransactionRoom) {
+              onOpenTransactionRoom({ catalogId, offerId });
+            }
+          }}
         />
       )}
     </div>

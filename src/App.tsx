@@ -7,6 +7,8 @@ import { DashboardBeranda } from "./components/DashboardBeranda";
 import { ProfileView } from "./components/ProfileView";
 import { SettingsModal } from "./components/SettingsModal";
 import { ImageViewerModal } from "./components/ImageViewerModal";
+import { TransactionRoomModal } from "./components/TransactionRoomModal";
+import { MyRoomsListModal } from "./components/MyRoomsListModal";
 import { User } from "./types";
 import { CheckCircle2 } from "lucide-react";
 
@@ -21,6 +23,14 @@ export default function App() {
 
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Room Transaksi Modal & List Modal state
+  const [activeRoomParams, setActiveRoomParams] = useState<{
+    roomId?: string;
+    catalogId?: string;
+    offerId?: string;
+  } | null>(null);
+  const [isMyRoomsListOpen, setIsMyRoomsListOpen] = useState(false);
 
   // Lightbox / Fullscreen Image viewer state for gemstone catalogs (avatars are excluded)
   const [fullscreenImage, setFullscreenImage] = useState<{
@@ -137,6 +147,7 @@ export default function App() {
             setViewingUserId(userId);
             setMainView("profile");
           }}
+          onOpenRoomsList={() => setIsMyRoomsListOpen(true)}
         />
 
         {/* System Notice Toast */}
@@ -163,6 +174,7 @@ export default function App() {
                 setMainView("profile");
               }}
               onOpenFullscreen={(data) => setFullscreenImage(data)}
+              onOpenTransactionRoom={(params) => setActiveRoomParams(params)}
             />
           ) : (
             <ProfileView
@@ -171,6 +183,7 @@ export default function App() {
               onBackToBeranda={() => setMainView("beranda")}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenFullscreen={(data) => setFullscreenImage(data)}
+              onOpenTransactionRoom={(params) => setActiveRoomParams(params)}
               onRefreshCurrentUser={(updated) => {
                 setCurrentUser(updated);
                 try {
@@ -196,6 +209,29 @@ export default function App() {
               setTimeout(() => setSystemNotice(null), 4000);
             }}
             onAccountDeleted={handleAccountDeleted}
+          />
+        )}
+
+        {/* Room Transaksi Eksklusif (Face ID & GPS Akurat) Modal */}
+        {activeRoomParams && (
+          <TransactionRoomModal
+            isOpen={!!activeRoomParams}
+            onClose={() => setActiveRoomParams(null)}
+            roomId={activeRoomParams.roomId}
+            catalogId={activeRoomParams.catalogId}
+            offerId={activeRoomParams.offerId}
+            currentUser={currentUser}
+            onOpenFullscreen={(data) => setFullscreenImage(data)}
+          />
+        )}
+
+        {/* Daftar Room Transaksi Saya */}
+        {isMyRoomsListOpen && (
+          <MyRoomsListModal
+            isOpen={isMyRoomsListOpen}
+            onClose={() => setIsMyRoomsListOpen(false)}
+            currentUser={currentUser}
+            onOpenRoom={(roomId) => setActiveRoomParams({ roomId })}
           />
         )}
 

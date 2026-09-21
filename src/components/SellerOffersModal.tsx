@@ -26,6 +26,7 @@ interface Props {
   catalog: CatalogItem;
   sellerId: string;
   onRespondOffer: (updatedCatalog: CatalogItem) => void;
+  onOpenRoom?: (catalogId: string, offerId: string) => void;
 }
 
 export const SellerOffersModal: React.FC<Props> = ({
@@ -34,6 +35,7 @@ export const SellerOffersModal: React.FC<Props> = ({
   catalog,
   sellerId,
   onRespondOffer,
+  onOpenRoom,
 }) => {
   const [respondingOfferId, setRespondingOfferId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -348,6 +350,21 @@ export const SellerOffersModal: React.FC<Props> = ({
                               <span>{isCountered ? "Ubah Harga Banding" : "Harga Banding"}</span>
                             </button>
                           </div>
+                        )}
+
+                        {isAccepted && onOpenRoom && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onOpenRoom(catalog.id, offer.id);
+                              onClose();
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs px-3.5 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer hover:scale-102 mt-1"
+                            title="Masuk ke Room Transaksi Berproteksi Face ID & GPS"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Room Transaksi Aman</span>
+                          </button>
                         )}
 
                         {/* WhatsApp Contact */}

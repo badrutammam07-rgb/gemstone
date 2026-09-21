@@ -10,6 +10,7 @@ import {
   Home,
   X,
   Sparkles,
+  ShieldCheck,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -20,6 +21,7 @@ interface Props {
   onOpenSettings: () => void;
   onLogout: () => void;
   onSelectOtherUser: (userId: string) => void;
+  onOpenRoomsList?: () => void;
 }
 
 export const HeaderNav: React.FC<Props> = ({
@@ -29,6 +31,7 @@ export const HeaderNav: React.FC<Props> = ({
   onOpenSettings,
   onLogout,
   onSelectOtherUser,
+  onOpenRoomsList,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -247,6 +250,20 @@ export const HeaderNav: React.FC<Props> = ({
               <span className="hidden sm:inline">Profil & Katalog</span>
             </button>
           </div>
+
+          {/* Tombol Akses Cepat Room Transaksi */}
+          {onOpenRoomsList && (
+            <button
+              id="btn-nav-rooms"
+              type="button"
+              onClick={onOpenRoomsList}
+              className="px-2.5 py-1.5 text-xs font-bold bg-slate-800/90 hover:bg-emerald-950/60 text-slate-300 hover:text-emerald-400 border border-slate-700/80 hover:border-emerald-500/40 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Daftar Room Transaksi Berproteksi Face ID & GPS"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span className="hidden md:inline">Room Transaksi</span>
+            </button>
+          )}
 
           {/* Logo Gear (Settings) */}
           <button

@@ -85,6 +85,59 @@ interface CatalogItem {
   offers?: NegotiationOffer[];
 }
 
+interface FaceIdVerification {
+  verified: boolean;
+  facePhotoUrl: string;
+  verifiedAt: number;
+}
+
+interface GpsVerification {
+  verified: boolean;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  locationName: string;
+  verifiedAt: number;
+}
+
+interface PartyVerification {
+  userId: string;
+  username: string;
+  userAvatar: string;
+  userPhone?: string;
+  faceId?: FaceIdVerification;
+  gps?: GpsVerification;
+  isFullyVerified: boolean;
+}
+
+interface RoomChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  content: string;
+  createdAt: string;
+  timestamp: number;
+}
+
+interface TransactionRoom {
+  id: string;
+  catalogId: string;
+  offerId: string;
+  gemType: string;
+  dimensions: string;
+  gemImage: string;
+  videoUrl?: string;
+  agreedPrice: string;
+  seller: PartyVerification;
+  buyer: PartyVerification;
+  status: "pending_verification" | "active" | "expired";
+  createdAt: number;
+  lastActivityAt: number;
+  expiresAt: number;
+  messages: RoomChatMessage[];
+}
+
 // Persistent File Database (JSON)
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
@@ -97,7 +150,11 @@ if (!fs.existsSync(DATA_DIR)) {
   }
 }
 
-function loadDatabase(): { users: User[]; catalogs: CatalogItem[] } {
+function loadDatabase(): {
+  users: User[];
+  catalogs: CatalogItem[];
+  transactionRooms: TransactionRoom[];
+} {
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, "utf-8");
@@ -105,24 +162,47 @@ function loadDatabase(): { users: User[]; catalogs: CatalogItem[] } {
       return {
         users: Array.isArray(parsed.users) ? parsed.users : [],
         catalogs: Array.isArray(parsed.catalogs) ? parsed.catalogs : [],
+        transactionRooms: Array.isArray(parsed.transactionRooms)
+          ? parsed.transactionRooms
+          : [],
       };
     }
   } catch (err) {
     console.error("Gagal membaca database.json:", err);
   }
-  return { users: [], catalogs: [] };
+  return { users: [], catalogs: [], transactionRooms: [] };
 }
 
 const initialDb = loadDatabase();
 // Seluruh akun dummy dihapus sehingga semua pendaftaran adalah akun real
 const users: User[] = initialDb.users;
 const catalogs: CatalogItem[] = initialDb.catalogs;
+let transactionRooms: TransactionRoom[] = initialDb.transactionRooms;
+
+// 1 Minggu dalam Milidetik (7 hari) untuk masa kadaluarsa jika tidak aktif komunikasinya
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+function cleanupExpiredRooms() {
+  const now = Date.now();
+  const prevCount = transactionRooms.length;
+  // Room otomatis terhapus 1 minggu setelah tidak aktif komunikasinya antara penjual dan pembeli
+  transactionRooms = transactionRooms.filter((r) => {
+    const isExpired = now - r.lastActivityAt > SEVEN_DAYS_MS;
+    return !isExpired;
+  });
+  if (transactionRooms.length !== prevCount) {
+    saveDatabase();
+    console.log(
+      `[ROOM CLEANUP] ${prevCount - transactionRooms.length} room transaksi otomatis terhapus karena tidak aktif lebih dari 1 minggu.`
+    );
+  }
+}
 
 function saveDatabase() {
   try {
     fs.writeFileSync(
       DB_FILE,
-      JSON.stringify({ users, catalogs }, null, 2),
+      JSON.stringify({ users, catalogs, transactionRooms }, null, 2),
       "utf-8"
     );
   } catch (err) {
@@ -1478,6 +1558,329 @@ async function startServer() {
     return res.json({
       success: true,
       message: `Katalog "${item.gemType}" berhasil dihapus.`,
+    });
+  });
+
+  // ==========================================
+  // API ROOM TRANSAKSI AMAN (FACE ID & GPS AKURAT)
+  // "Jika calon pembeli srius membeli atas kesepakatan harga dari negosiasi
+  // buatkan tombol cekout dan otomatis akan membuatkan room antar penjual dan pembelinya
+  // namun dengan syarat keduanya wajib mengaktifkan face id dan GPS akurat baru room itu terbentuk.
+  // Jika salah satu tidak mengaktifkan maka salah satu antara penjual ataupun pembeli tidak bisa masuk ke room itu.
+  // Dan tampilkan notifikasi saat sebelum mengaktifkan FACE ID yang jelas dan GPS yang akurat
+  // dengan tulisan DEMI KEAMANAN TRANSAKSI MAKA KEDUA BELAH PIHAK WAJIB MENGENALI WAJAH DAN LOKASI YANG JELAS.
+  // dan di room terbesbut mereka bisa saling berkomntar seperti kolom chatt.
+  // Room tersebut akan otomatis terhapus 1 Minggu stelah tidak aktif komunikasinya antara penjual dan pembeli tersebut"
+  // ==========================================
+
+  // 1. Ambil Semua Room Transaksi Pengguna
+  app.get("/api/rooms/user/:userId", (req, res) => {
+    cleanupExpiredRooms();
+    const { userId } = req.params;
+    const userRooms = transactionRooms.filter(
+      (r) => r.seller.userId === userId || r.buyer.userId === userId
+    );
+    return res.json({ success: true, rooms: userRooms });
+  });
+
+  // 2. Buat atau Dapatkan Room Transaksi atas Kesepakatan Harga (Tombol Cekout)
+  app.post("/api/rooms/create-or-get", (req, res) => {
+    cleanupExpiredRooms();
+    const { catalogId, offerId, buyerId } = req.body;
+
+    if (!catalogId || !offerId) {
+      return res.status(400).json({
+        success: false,
+        message: "ID Katalog dan ID Penawaran diperlukan.",
+      });
+    }
+
+    const catalog = catalogs.find((c) => c.id === catalogId);
+    if (!catalog) {
+      return res.status(404).json({
+        success: false,
+        message: "Katalog permata tidak ditemukan.",
+      });
+    }
+
+    catalog.offers = catalog.offers || [];
+    const offer = catalog.offers.find((o) => o.id === offerId);
+    if (!offer) {
+      return res.status(404).json({
+        success: false,
+        message: "Penawaran tidak ditemukan.",
+      });
+    }
+
+    if (offer.status !== "accepted") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cekout dan pembuatan room hanya dapat dilakukan jika harga penawaran sudah disepakati oleh kedua belah pihak.",
+      });
+    }
+
+    // Cek apakah room untuk transaksi ini sudah pernah dibuat sebelumnya
+    const existingRoom = transactionRooms.find(
+      (r) => r.catalogId === catalogId && r.offerId === offerId
+    );
+
+    if (existingRoom) {
+      return res.json({
+        success: true,
+        room: existingRoom,
+        isNew: false,
+        message: "Room transaksi aktif dimuat.",
+      });
+    }
+
+    // Buat Room Transaksi Baru
+    const sellerUser = users.find((u) => u.id === catalog.userId);
+    const finalBuyerId = buyerId || offer.buyerId;
+    const buyerUser = users.find((u) => u.id === finalBuyerId);
+    const agreedPrice = offer.acceptedPrice || offer.counterPrice || offer.offerPrice;
+
+    const newRoom: TransactionRoom = {
+      id: `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      catalogId: catalog.id,
+      offerId: offer.id,
+      gemType: catalog.gemType,
+      dimensions: catalog.dimensions,
+      gemImage: catalog.images && catalog.images.length > 0 ? catalog.images[0] : "",
+      videoUrl: catalog.videoUrl,
+      agreedPrice,
+      seller: {
+        userId: catalog.userId,
+        username: sellerUser ? sellerUser.username : catalog.username,
+        userAvatar: sellerUser ? sellerUser.avatar : catalog.userAvatar,
+        userPhone: sellerUser ? sellerUser.phone : undefined,
+        isFullyVerified: false,
+      },
+      buyer: {
+        userId: finalBuyerId,
+        username: buyerUser ? buyerUser.username : offer.buyerName,
+        userAvatar: buyerUser ? buyerUser.avatar : offer.buyerAvatar,
+        userPhone: buyerUser ? buyerUser.phone : offer.buyerPhone,
+        isFullyVerified: false,
+      },
+      status: "pending_verification",
+      createdAt: Date.now(),
+      lastActivityAt: Date.now(),
+      expiresAt: Date.now() + SEVEN_DAYS_MS,
+      messages: [
+        {
+          id: `msg-system-${Date.now()}`,
+          senderId: "system",
+          senderName: "Sistem Keamanan Komunitas",
+          senderAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=150&q=80",
+          content: `Room Transaksi Resmi dibuat atas kesepakatan harga ${agreedPrice}. DEMI KEAMANAN TRANSAKSI MAKA KEDUA BELAH PIHAK WAJIB MENGENALI WAJAH DAN LOKASI YANG JELAS dengan mengaktifkan Face ID dan GPS akurat sebelum dapat saling mengobrol di room ini.`,
+          createdAt: "Baru saja",
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    transactionRooms.unshift(newRoom);
+    saveDatabase();
+
+    console.log(
+      `[ROOM CEKOUT] Room transaksi baru ${newRoom.id} dibuat untuk ${newRoom.gemType} (Penjual: ${newRoom.seller.username}, Pembeli: ${newRoom.buyer.username}, Harga: ${agreedPrice})`
+    );
+
+    return res.json({
+      success: true,
+      room: newRoom,
+      isNew: true,
+      message: "Room transaksi berhasil dibuat. Silakan selesaikan verifikasi Face ID & GPS akurat.",
+    });
+  });
+
+  // 3. Detail Room Transaksi
+  app.get("/api/rooms/:roomId", (req, res) => {
+    cleanupExpiredRooms();
+    const { roomId } = req.params;
+    const { userId } = req.query;
+
+    const room = transactionRooms.find((r) => r.id === roomId);
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Room transaksi tidak ditemukan atau telah otomatis terhapus karena tidak aktif komunikasinya lebih dari 1 minggu.",
+      });
+    }
+
+    // Pastikan hanya penjual atau pembeli yang dapat mengakses room ini
+    if (userId && room.seller.userId !== userId && room.buyer.userId !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "Anda tidak memiliki hak akses ke room transaksi privat ini.",
+      });
+    }
+
+    return res.json({ success: true, room });
+  });
+
+  // 4. Verifikasi Wajah (Face ID) & GPS Akurat oleh Penjual / Pembeli
+  app.post("/api/rooms/:roomId/verify", (req, res) => {
+    cleanupExpiredRooms();
+    const { roomId } = req.params;
+    const { userId, facePhotoUrl, latitude, longitude, accuracyMeters, locationName } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "ID Pengguna diperlukan." });
+    }
+
+    if (!facePhotoUrl || !String(facePhotoUrl).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Foto scan Face ID wajah yang jelas wajib diaktifkan demi keamanan transaksi.",
+      });
+    }
+
+    if (latitude === undefined || longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Akses lokasi GPS yang akurat wajib diaktifkan demi keamanan transaksi.",
+      });
+    }
+
+    const room = transactionRooms.find((r) => r.id === roomId);
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message: "Room transaksi tidak ditemukan atau sudah kadaluarsa.",
+      });
+    }
+
+    const isSeller = room.seller.userId === userId;
+    const isBuyer = room.buyer.userId === userId;
+
+    if (!isSeller && !isBuyer) {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya penjual atau pembeli bersangkutan yang dapat melakukan verifikasi.",
+      });
+    }
+
+    const targetParty = isSeller ? room.seller : room.buyer;
+    const now = Date.now();
+
+    targetParty.faceId = {
+      verified: true,
+      facePhotoUrl: String(facePhotoUrl).trim(),
+      verifiedAt: now,
+    };
+
+    targetParty.gps = {
+      verified: true,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      accuracyMeters: Number(accuracyMeters) || 10,
+      locationName: String(locationName || "Lokasi Presisi Terverifikasi").trim(),
+      verifiedAt: now,
+    };
+
+    targetParty.isFullyVerified = true;
+
+    // Periksa apakah KEDUA BELAH PIHAK sudah selesai mengaktifkan Face ID & GPS
+    const isBothVerified = room.seller.isFullyVerified && room.buyer.isFullyVerified;
+
+    if (isBothVerified) {
+      room.status = "active";
+      room.messages.push({
+        id: `msg-verified-${Date.now()}`,
+        senderId: "system",
+        senderName: "Sistem Keamanan Komunitas",
+        senderAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=150&q=80",
+        content: `🔒 KEDUA BELAH PIHAK LENGKAP TERVERIFIKASI! Penjual (@${room.seller.username}) dan Pembeli (@${room.buyer.username}) telah berhasil mengaktifkan Face ID yang jelas dan GPS yang akurat. Ruang obrolan transaksi resmi dibuka!`,
+        createdAt: "Baru saja",
+        timestamp: Date.now(),
+      });
+    }
+
+    room.lastActivityAt = now;
+    room.expiresAt = now + SEVEN_DAYS_MS;
+    saveDatabase();
+
+    console.log(
+      `[VERIFIKASI BERHASIL] Pengguna ${targetParty.username} (${isSeller ? "Penjual" : "Pembeli"}) berhasil verifikasi Face ID & GPS di room ${room.id}. Keduanya aktif? ${isBothVerified}`
+    );
+
+    return res.json({
+      success: true,
+      message: isBothVerified
+        ? "Selamat! Kedua belah pihak telah terverifikasi. Room obrolan transaksi sekarang dapat digunakan sepenuhnya."
+        : "Verifikasi Face ID dan GPS Anda berhasil! Menunggu pihak lawan mengaktifkan verifikasi agar room obrolan terbuka.",
+      room,
+      isBothVerified,
+    });
+  });
+
+  // 5. Kirim Pesan / Komentar di Dalam Room Transaksi
+  app.post("/api/rooms/:roomId/messages", (req, res) => {
+    cleanupExpiredRooms();
+    const { roomId } = req.params;
+    const { senderId, content } = req.body;
+
+    if (!senderId || !content || !String(content).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Pengirim dan isi pesan tidak boleh kosong.",
+      });
+    }
+
+    const room = transactionRooms.find((r) => r.id === roomId);
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message: "Room transaksi tidak ditemukan atau telah otomatis terhapus karena tidak aktif 1 minggu.",
+      });
+    }
+
+    // SYARAT MUTLAK: Keduanya WAJIB mengaktifkan Face ID dan GPS akurat baru bisa saling berkomentar di room
+    if (!room.seller.isFullyVerified || !room.buyer.isFullyVerified) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Pesan tidak dapat dikirim! Kedua belah pihak (penjual & pembeli) wajib mengaktifkan Face ID dan GPS akurat terlebih dahulu sebelum dapat saling berkomentar.",
+      });
+    }
+
+    const isSeller = room.seller.userId === senderId;
+    const isBuyer = room.buyer.userId === senderId;
+
+    if (!isSeller && !isBuyer) {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya penjual dan pembeli yang berhak mengirim pesan di room ini.",
+      });
+    }
+
+    const senderParty = isSeller ? room.seller : room.buyer;
+    const now = Date.now();
+
+    const newMsg: RoomChatMessage = {
+      id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      senderId,
+      senderName: senderParty.username,
+      senderAvatar: senderParty.userAvatar,
+      content: String(content).trim(),
+      createdAt: "Baru saja",
+      timestamp: now,
+    };
+
+    room.messages.push(newMsg);
+    // Reset masa aktif: otomatis terhapus 1 minggu setelah TIDAK AKTIF komunikasinya
+    room.lastActivityAt = now;
+    room.expiresAt = now + SEVEN_DAYS_MS;
+
+    saveDatabase();
+
+    return res.json({
+      success: true,
+      message: newMsg,
+      room,
     });
   });
 
