@@ -65,7 +65,14 @@ export const RegisterView: React.FC<Props> = ({
         }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const rawText = await response.text();
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error("[Register] Response parse error:", parseErr);
+        throw new Error("Gagal memproses respon server. Silakan coba lagi.");
+      }
 
       if (!response.ok || !data.success) {
         throw new Error(data.message || "Pendaftaran akun gagal.");

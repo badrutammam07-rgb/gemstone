@@ -22,10 +22,14 @@ import {
   Edit3,
   Maximize2,
   Banknote,
+  Handshake,
+  ShieldCheck,
 } from "lucide-react";
-import { User, CatalogItem } from "../types";
+import { User, CatalogItem, NegotiationOffer } from "../types";
 import { InputCatalogModal } from "./InputCatalogModal";
 import { ProfileCropModal } from "./ProfileCropModal";
+import { NegotiateModal } from "./NegotiateModal";
+import { SellerOffersModal } from "./SellerOffersModal";
 import { formatToRupiah } from "../utils/currencyUtils";
 
 interface Props {
@@ -64,6 +68,10 @@ export const ProfileView: React.FC<Props> = ({
   const [cropModalSrc, setCropModalSrc] = useState<string | null>(null);
   const [isCropOpen, setIsCropOpen] = useState(false);
 
+  // State Fitur Negosiasi Privat
+  const [negotiatingCatalog, setNegotiatingCatalog] = useState<CatalogItem | null>(null);
+  const [viewingOffersCatalog, setViewingOffersCatalog] = useState<CatalogItem | null>(null);
+
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync profileUser when currentUser is updated (e.g. from Settings modal)
@@ -76,7 +84,7 @@ export const ProfileView: React.FC<Props> = ({
   // Fetch target user data & catalogs
   useEffect(() => {
     fetchProfileData();
-  }, [targetUserId]);
+  }, [targetUserId, currentUser.id]);
 
   const fetchProfileData = async () => {
     setIsLoading(true);
@@ -88,8 +96,8 @@ export const ProfileView: React.FC<Props> = ({
         setProfileUser(userData.user);
       }
 
-      // Fetch user's catalogs
-      const catRes = await fetch(`/api/catalog/user/${targetUserId}`);
+      // Fetch user's catalogs with privacy sanitization
+      const catRes = await fetch(`/api/catalog/user/${targetUserId}?currentUserId=${encodeURIComponent(currentUser.id)}`);
       const catData = await catRes.json();
       if (catData.success) {
         setCatalogs(catData.catalogs);
@@ -629,6 +637,25 @@ export const ProfileView: React.FC<Props> = ({
                         </span>
                       </div>
                     )}
+
+                    {/* Banner Penawaran Masuk (Jika ada tawaran pada item ini) */}
+                    {isOwnProfile && !isSold && (item.offers || []).length > 0 && (
+                      <div className="bg-amber-950/40 border border-amber-800/70 p-2.5 rounded-xl flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <Handshake className="w-3.5 h-3.5 text-amber-400" />
+                          <span className="font-bold text-amber-300">
+                            {(item.offers || []).length} Penawaran Masuk
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setViewingOffersCatalog(item)}
+                          className="text-[11px] font-bold text-amber-300 hover:text-white bg-amber-900/60 px-2 py-0.5 rounded-lg border border-amber-700/60 cursor-pointer"
+                        >
+                          Lihat
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -684,6 +711,30 @@ export const ProfileView: React.FC<Props> = ({
                     )}
                   </div>
                 )}
+
+                {/* Action Buttons untuk Pengunjung Profil Lain */}
+                {!isOwnProfile && isForSale && !isSold && (
+                  <div className="p-3.5 bg-slate-950/90 border-t border-slate-800 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNegotiatingCatalog(item)}
+                      className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <Handshake className="w-3.5 h-3.5" />
+                      <span>Tawar Harga</span>
+                    </button>
+                    <a
+                      href={`https://wa.me/6281234567890?text=${encodeURIComponent(
+                        `Halo ${profileUser?.username}, saya tertarik dengan batu mulia "${item.gemType}" (Harga: ${formatToRupiah(item.price)}) di Komunitas Batu Mulia.`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2 px-3 rounded-xl transition-colors border border-slate-700"
+                    >
+                      Tanya WA
+                    </a>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -712,6 +763,41 @@ export const ProfileView: React.FC<Props> = ({
         onClose={() => setIsCropOpen(false)}
         onConfirm={handleCropConfirm}
       />
+
+      {/* Modal Negosiasi (Calon Pembeli) */}
+      {negotiatingCatalog && (
+        <NegotiateModal
+          isOpen={!!negotiatingCatalog}
+          onClose={() => setNegotiatingCatalog(null)}
+          catalog={negotiatingCatalog}
+          currentUser={currentUser}
+          onOfferSuccess={(updatedCatalog) => {
+            setCatalogs((prev) =>
+              prev.map((c) => (c.id === updatedCatalog.id ? updatedCatalog : c))
+            );
+            setActionNotice("Penawaran Anda berhasil dikirim ke penjual secara privat.");
+            setTimeout(() => setActionNotice(null), 5000);
+          }}
+        />
+      )}
+
+      {/* Modal Penawaran Masuk (Penjual) */}
+      {viewingOffersCatalog && (
+        <SellerOffersModal
+          isOpen={!!viewingOffersCatalog}
+          onClose={() => setViewingOffersCatalog(null)}
+          catalog={viewingOffersCatalog}
+          sellerId={currentUser.id}
+          onRespondOffer={(updatedCatalog) => {
+            setCatalogs((prev) =>
+              prev.map((c) => (c.id === updatedCatalog.id ? updatedCatalog : c))
+            );
+            if (viewingOffersCatalog && viewingOffersCatalog.id === updatedCatalog.id) {
+              setViewingOffersCatalog(updatedCatalog);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

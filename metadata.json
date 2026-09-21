@@ -1,6 +1,6 @@
 {
   "name": "Komunitas Batu Mulia",
-  "description": "Aplikasi komunitas pecinta batu mulia Nusantara dengan otentikasi akun, OTP WhatsApp instan, dan forum koleksi permata.",
+  "description": "Aplikasi komunitas pecinta batu mulia Nusantara dengan otentikasi akun, database Turso, dan forum koleksi permata.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

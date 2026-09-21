@@ -27,6 +27,26 @@ interface User {
   joinDate: string;
 }
 
+interface NegotiationOffer {
+  id: string;
+  catalogId: string;
+  buyerId: string;
+  buyerName: string;
+  buyerAvatar: string;
+  buyerPhone?: string;
+  sellerId: string;
+  offerPrice: string;
+  note?: string;
+  status: "pending" | "accepted" | "countered";
+  createdAt: string;
+  updatedAt?: number;
+  counterPrice?: string;
+  counterNote?: string;
+  counteredAt?: string;
+  acceptedPrice?: string;
+  acceptedAt?: string;
+}
+
 interface Comment {
   id: string;
   authorId: string;
@@ -34,6 +54,12 @@ interface Comment {
   authorAvatar: string;
   content: string;
   createdAt: string;
+  isOffer?: boolean;
+  offerId?: string;
+  offerPrice?: string;
+  offerStatus?: "pending" | "accepted" | "countered";
+  counterPrice?: string;
+  counterNote?: string;
 }
 
 interface CatalogItem {
@@ -55,6 +81,7 @@ interface CatalogItem {
   comments: Comment[];
   likes: string[];
   createdAt: string;
+  offers?: NegotiationOffer[];
 }
 
 // Persistent File Database (JSON)
@@ -133,6 +160,63 @@ function cleanupExpiredSoldCatalogs() {
   }
 }
 
+// Helper untuk menjaga privasi penawaran:
+// "hanya calon pembeli tersebut dan penjual yang dapat melihat, calon pembeli lain tidak dapat melihat yang orang lain tawar. Namun di kolom komentar tetap tertulis bahwa user tersebut telah melakukan penawaran."
+function sanitizeCatalogForViewer(catalog: CatalogItem, viewerId?: string): CatalogItem {
+  const isOwner = Boolean(viewerId && catalog.userId === viewerId);
+
+  // 1. Sanitasi komentar penawaran
+  const sanitizedComments: Comment[] = (catalog.comments || []).map((comm) => {
+    if (!comm.isOffer) {
+      return { ...comm };
+    }
+
+    const isThisBuyer = Boolean(viewerId && comm.authorId === viewerId);
+
+    // Jika viewer adalah penjual atau penawar itu sendiri: tampilkan harga & status lengkap
+    if (isOwner || isThisBuyer) {
+      return { ...comm };
+    }
+
+    // Jika calon pembeli lain / pengunjung umum: sembunyikan nominal penawaran maupun harga banding!
+    let publicContent = `${comm.authorName} telah melakukan penawaran harga.`;
+    if (comm.offerStatus === "countered") {
+      publicContent = `Penjual dan ${comm.authorName} sedang dalam proses tawar-menawar harga banding.`;
+    } else if (comm.offerStatus === "accepted") {
+      publicContent = `Penawaran harga dari ${comm.authorName} telah disepakati oleh penjual!`;
+    }
+
+    return {
+      id: comm.id,
+      authorId: comm.authorId,
+      authorName: comm.authorName,
+      authorAvatar: comm.authorAvatar,
+      content: publicContent,
+      createdAt: comm.createdAt,
+      isOffer: true,
+      offerId: comm.offerId,
+      offerStatus: comm.offerStatus || "pending",
+      // offerPrice dan counterPrice sengaja disembunyikan agar pembeli lain tidak dapat melihat nominal tawaran
+    };
+  });
+
+  // 2. Sanitasi array offers (hanya penjual dan pembeli bersangkutan)
+  let sanitizedOffers: NegotiationOffer[] = [];
+  if (isOwner) {
+    // Penjual dapat melihat seluruh penawaran yang masuk
+    sanitizedOffers = catalog.offers || [];
+  } else if (viewerId) {
+    // Calon pembeli HANYA dapat melihat penawaran miliknya sendiri
+    sanitizedOffers = (catalog.offers || []).filter((o) => o.buyerId === viewerId);
+  }
+
+  return {
+    ...catalog,
+    comments: sanitizedComments,
+    offers: sanitizedOffers,
+  };
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -192,7 +276,7 @@ async function startServer() {
     }
   });
 
-  // Check Phone Existence for SMS OTP Forgot Password
+  // Check Phone Existence for Account Verification
   app.get("/api/auth/check-phone", async (req, res) => {
     try {
       const phoneParam = (req.query.phone as string) || "";
@@ -244,69 +328,93 @@ async function startServer() {
 
   // 1. Register (Menyimpan USERNAME & PASSWORD di Database Turso)
   app.post("/api/auth/register", async (req, res) => {
-    const { username, phone, password, confirmPassword } = req.body;
-
-    if (!username || !phone || !password || !confirmPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Mohon lengkapi semua data pendaftaran (Username, No HP, dan Password).",
-      });
-    }
-
-    if (password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: "Konfirmasi password tidak cocok." });
-    }
-
-    const cleanRawPhone = phone.trim();
-    if (cleanRawPhone.length < 9) {
-      return res.status(400).json({ success: false, message: "Nomor HP minimal 10 digit." });
-    }
-
-    const cleanUsername = username.trim();
-
-    // Check existence in Turso or memory
-    const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
-    if (existingTurso) {
-      return res.status(400).json({
-        success: false,
-        message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
-      });
-    }
-
-    const existsUsername = users.find(
-      (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
-    );
-    if (existsUsername) {
-      return res.status(400).json({
-        success: false,
-        message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
-      });
-    }
-
-    const existingTursoPhone = await getUserByPhone(cleanRawPhone);
-    if (existingTursoPhone) {
-      return res.status(400).json({
-        success: false,
-        message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
-      });
-    }
-
-    const existsPhone = users.find(
-      (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
-    );
-    if (existsPhone) {
-      return res.status(400).json({
-        success: false,
-        message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
-      });
-    }
-
-    const newId = `user-${Date.now()}`;
-    const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80";
-
-    // Save to Turso Database
     try {
-      await insertUser({
+      const { username, phone, password, confirmPassword } = req.body;
+
+      if (!username || !phone || !password || !confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Mohon lengkapi semua data pendaftaran (Username, No HP, dan Password).",
+        });
+      }
+
+      if (password !== confirmPassword) {
+        return res.status(400).json({ success: false, message: "Konfirmasi password tidak cocok." });
+      }
+
+      const cleanRawPhone = phone.trim();
+      if (cleanRawPhone.length < 9) {
+        return res.status(400).json({ success: false, message: "Nomor HP minimal 10 digit." });
+      }
+
+      const cleanUsername = username.trim();
+
+      // Check existence in Turso or memory
+      try {
+        const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
+        if (existingTurso) {
+          return res.status(400).json({
+            success: false,
+            message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+          });
+        }
+      } catch (checkErr) {
+        console.warn("[Register] Turso username check warning:", checkErr);
+      }
+
+      const existsUsername = users.find(
+        (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
+      );
+      if (existsUsername) {
+        return res.status(400).json({
+          success: false,
+          message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+        });
+      }
+
+      try {
+        const existingTursoPhone = await getUserByPhone(cleanRawPhone);
+        if (existingTursoPhone) {
+          return res.status(400).json({
+            success: false,
+            message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
+          });
+        }
+      } catch (checkPhoneErr) {
+        console.warn("[Register] Turso phone check warning:", checkPhoneErr);
+      }
+
+      const existsPhone = users.find(
+        (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
+      );
+      if (existsPhone) {
+        return res.status(400).json({
+          success: false,
+          message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
+        });
+      }
+
+      const newId = `user-${Date.now()}`;
+      const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80";
+
+      // Save to Turso Database
+      try {
+        await insertUser({
+          id: newId,
+          username: cleanUsername,
+          phone: cleanRawPhone,
+          password: password,
+          role: "Anggota Komunitas Batu Mulia",
+          avatar: defaultAvatar,
+          bio: "Pecinta batu mulia baru bergabung di Komunitas.",
+          joinDate: "Baru saja",
+        });
+        console.log(`[Turso DB] Pengguna "${cleanUsername}" berhasil disimpan di database Turso.`);
+      } catch (dbErr) {
+        console.error("[Turso DB] Warning saat simpan ke Turso:", dbErr);
+      }
+
+      const newUser: User = {
         id: newId,
         username: cleanUsername,
         phone: cleanRawPhone,
@@ -314,46 +422,38 @@ async function startServer() {
         role: "Anggota Komunitas Batu Mulia",
         avatar: defaultAvatar,
         bio: "Pecinta batu mulia baru bergabung di Komunitas.",
+        followers: [],
+        following: [],
         joinDate: "Baru saja",
+      };
+
+      users.push(newUser);
+      saveDatabase();
+
+      const safeUser = {
+        id: newUser.id,
+        username: newUser.username,
+        phone: newUser.phone,
+        role: newUser.role,
+        avatar: newUser.avatar,
+        bio: newUser.bio,
+        followers: newUser.followers,
+        following: newUser.following,
+        joinDate: newUser.joinDate,
+      };
+
+      return res.status(201).json({
+        success: true,
+        message: `Akun berhasil didaftarkan di Database! Selamat bergabung di Komunitas Batu Mulia.`,
+        user: safeUser,
       });
-      console.log(`[Turso DB] Pengguna "${cleanUsername}" berhasil disimpan di database Turso.`);
-    } catch (dbErr) {
-      console.error("[Turso DB] Warning saat simpan ke Turso:", dbErr);
+    } catch (err: any) {
+      console.error("[Register Error]", err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Terjadi kesalahan pada server saat mendaftarkan akun. Silakan coba lagi.",
+      });
     }
-
-    const newUser: User = {
-      id: newId,
-      username: cleanUsername,
-      phone: cleanRawPhone,
-      password: password,
-      role: "Anggota Komunitas Batu Mulia",
-      avatar: defaultAvatar,
-      bio: "Pecinta batu mulia baru bergabung di Komunitas.",
-      followers: [],
-      following: [],
-      joinDate: "Baru saja",
-    };
-
-    users.push(newUser);
-    saveDatabase();
-
-    const safeUser = {
-      id: newUser.id,
-      username: newUser.username,
-      phone: newUser.phone,
-      role: newUser.role,
-      avatar: newUser.avatar,
-      bio: newUser.bio,
-      followers: newUser.followers,
-      following: newUser.following,
-      joinDate: newUser.joinDate,
-    };
-
-    return res.status(201).json({
-      success: true,
-      message: `Akun berhasil didaftarkan di Database Turso! Selamat bergabung di Komunitas Batu Mulia.`,
-      user: safeUser,
-    });
   });
 
   // 4. Login (Autentikasi USERNAME & PASSWORD via Database Turso)
@@ -426,7 +526,7 @@ async function startServer() {
     });
   });
 
-  // 5. Reset Password di Database Turso (Setelah Verifikasi OTP SMS Firebase Auth)
+  // 5. Reset Password di Database Turso (Verifikasi Langsung Nomor HP)
   app.post("/api/auth/forgot-password/reset", async (req, res) => {
     const { phone, newPassword, confirmPassword } = req.body;
 
@@ -434,15 +534,31 @@ async function startServer() {
       return res.status(400).json({ success: false, message: "Mohon lengkapi No HP dan kata sandi baru." });
     }
 
+    const cleanRawPhone = phone.trim();
+
     if (newPassword !== confirmPassword) {
-      return res.status(400).json({ success: false, message: "Konfirmasi kata sandi tidak cocok." });
+      return res.status(400).json({ success: false, message: "Konfirmasi kata sandi baru tidak cocok." });
     }
 
     if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, message: "Password baru minimal 6 karakter." });
+      return res.status(400).json({ success: false, message: "Kata sandi baru minimal 6 karakter." });
     }
 
-    const cleanRawPhone = phone.trim();
+    // Periksa user di Turso atau memory
+    let user = await getUserByPhone(cleanRawPhone);
+    if (!user) {
+      const found = users.find(
+        (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
+      );
+      if (found) user = found as any;
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: `Nomor HP "${cleanRawPhone}" belum terdaftar pada akun Komunitas Batu Mulia.`,
+      });
+    }
 
     // Update in Turso Database
     try {
@@ -452,21 +568,20 @@ async function startServer() {
       console.error("[Turso DB] Warning update password di Turso:", dbErr);
     }
 
-    const user = users.find(
+    const localUser = users.find(
       (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
     );
 
-    if (user) {
-      user.password = newPassword;
+    if (localUser) {
+      localUser.password = newPassword;
       saveDatabase();
     }
 
-    const tursoUser = await getUserByPhone(cleanRawPhone);
-    const targetUsername = user?.username || tursoUser?.username || cleanRawPhone;
+    const targetUsername = user.username || cleanRawPhone;
 
     return res.json({
       success: true,
-      message: "Kata sandi berhasil diperbarui di database! Silakan masuk dengan kata sandi baru.",
+      message: `Kata sandi untuk akun "${targetUsername}" berhasil diperbarui di database! Silakan masuk dengan kata sandi baru.`,
       username: targetUsername,
     });
   });
@@ -697,6 +812,7 @@ async function startServer() {
   app.get("/api/catalog/feed", (req, res) => {
     cleanupExpiredSoldCatalogs();
 
+    const viewerId = (req.query.currentUserId as string) || undefined;
     const published = catalogs.filter((c) => c.isPublished);
 
     // Sort by bumpedAt or publishedAt descending (highest timestamp = top)
@@ -706,16 +822,20 @@ async function startServer() {
       return timeB - timeA;
     });
 
-    return res.json({ success: true, catalogs: published });
+    const sanitized = published.map((c) => sanitizeCatalogForViewer(c, viewerId));
+
+    return res.json({ success: true, catalogs: sanitized });
   });
 
   // 11. Get Catalogs of a Specific User (for Profile page)
   app.get("/api/catalog/user/:userId", (req, res) => {
     const { userId } = req.params;
+    const viewerId = (req.query.currentUserId as string) || undefined;
     cleanupExpiredSoldCatalogs();
 
     const userCatalogs = catalogs.filter((c) => c.userId === userId);
-    return res.json({ success: true, catalogs: userCatalogs });
+    const sanitized = userCatalogs.map((c) => sanitizeCatalogForViewer(c, viewerId));
+    return res.json({ success: true, catalogs: sanitized });
   });
 
   // 12. Create New Catalog (Input Katalog di Profile)
@@ -933,7 +1053,320 @@ async function startServer() {
     });
   });
 
-  // 18. Hapus Akun Permanen dari Database (Turso Database & File)
+  // 18. Negosiasi / Tawar Harga Privat pada Postingan
+  // "Buatkan fitur negosiasi pada bagian postingan user namun hanya calon pembeli tersebut dan penjual yang dapat melihat, calon pembeli lain tidak dapat melihat yang orang lain tawar. Namun di kolom komentar tetap tertulis bahwa user tersebut telah melakukan penawaran."
+  app.post("/api/catalog/:id/offer", (req, res) => {
+    const { id } = req.params;
+    const { buyerId, buyerName, buyerAvatar, buyerPhone, offerPrice, note } = req.body;
+
+    if (!buyerId || !offerPrice || !String(offerPrice).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nominal penawaran harga wajib diisi.",
+      });
+    }
+
+    const catalog = catalogs.find((c) => c.id === id);
+    if (!catalog) {
+      return res.status(404).json({ success: false, message: "Katalog tidak ditemukan." });
+    }
+
+    if (catalog.userId === buyerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Anda tidak dapat menawar katalog barang milik Anda sendiri.",
+      });
+    }
+
+    if (catalog.status === "terjual") {
+      return res.status(400).json({
+        success: false,
+        message: "Katalog ini sudah berstatus terjual.",
+      });
+    }
+
+    catalog.offers = catalog.offers || [];
+    const existingIndex = catalog.offers.findIndex((o) => o.buyerId === buyerId);
+    const offerId = existingIndex !== -1 ? catalog.offers[existingIndex].id : `off-${Date.now()}`;
+
+    const newOffer: NegotiationOffer = {
+      id: offerId,
+      catalogId: catalog.id,
+      buyerId,
+      buyerName: buyerName || "Calon Pembeli",
+      buyerAvatar:
+        buyerAvatar ||
+        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      buyerPhone: buyerPhone || "",
+      sellerId: catalog.userId,
+      offerPrice: String(offerPrice).trim(),
+      note: note ? String(note).trim() : "",
+      status: "pending",
+      createdAt: "Baru saja",
+      updatedAt: Date.now(),
+    };
+
+    if (existingIndex !== -1) {
+      catalog.offers[existingIndex] = newOffer;
+    } else {
+      catalog.offers.push(newOffer);
+    }
+
+    // Catat ke kolom komentar agar selalu tercatat bahwa user tersebut telah menawar:
+    // "Namun di kolom komentar tetap tertulis bahwa user tersebut telah melakukan penawaran."
+    const offerComment: Comment = {
+      id: `comm-offer-${Date.now()}`,
+      authorId: buyerId,
+      authorName: buyerName || "Calon Pembeli",
+      authorAvatar:
+        buyerAvatar ||
+        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      content: note && String(note).trim() ? String(note).trim() : "Telah melakukan penawaran harga.",
+      createdAt: "Baru saja",
+      isOffer: true,
+      offerId,
+      offerPrice: String(offerPrice).trim(),
+      offerStatus: "pending",
+    };
+
+    catalog.comments.push(offerComment);
+    saveDatabase();
+
+    console.log(`[NEGO PRIVAT] ${buyerName} menawar ${catalog.gemType}: ${offerPrice}`);
+
+    const sanitizedCatalog = sanitizeCatalogForViewer(catalog, buyerId);
+
+    return res.status(201).json({
+      success: true,
+      message: `Penawaran harga berhasil diajukan! Hanya Anda dan penjual (${catalog.username}) yang dapat melihat nominal ini.`,
+      offer: newOffer,
+      catalog: sanitizedCatalog,
+    });
+  });
+
+  // 19. Respons Penawaran oleh Penjual: Sepakat / Terima Tawaran Pembeli
+  // "Penjual tidak boleh menolak penawaran namun mengajukan harga banding secara manual"
+  app.put("/api/catalog/:id/offer/:offerId/respond", (req, res) => {
+    const { id, offerId } = req.params;
+    const { sellerId, status } = req.body;
+
+    if (status !== "accepted") {
+      return res.status(400).json({
+        success: false,
+        message: "Penjual tidak dapat menolak tawaran. Silakan gunakan fitur Ajukan Harga Banding jika harga belum sesuai.",
+      });
+    }
+
+    const catalog = catalogs.find((c) => c.id === id);
+    if (!catalog) {
+      return res.status(404).json({ success: false, message: "Katalog tidak ditemukan." });
+    }
+
+    if (catalog.userId !== sellerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya penjual pemilik katalog ini yang berhak merespons penawaran.",
+      });
+    }
+
+    catalog.offers = catalog.offers || [];
+    const offer = catalog.offers.find((o) => o.id === offerId);
+    if (!offer) {
+      return res.status(404).json({ success: false, message: "Penawaran tidak ditemukan." });
+    }
+
+    offer.status = "accepted";
+    offer.acceptedPrice = offer.offerPrice;
+    offer.updatedAt = Date.now();
+
+    // Perbarui status di komentar penawaran
+    catalog.comments.forEach((cm) => {
+      if (cm.offerId === offerId) {
+        cm.offerStatus = "accepted";
+      }
+    });
+
+    // Tambahkan komentar konfirmasi respons dari penjual di postingan
+    const sellerUser = users.find((u) => u.id === sellerId);
+    const sellerName = sellerUser ? sellerUser.username : catalog.username;
+    const sellerAvatar = sellerUser ? sellerUser.avatar : catalog.userAvatar;
+
+    const feedbackComment: Comment = {
+      id: `comm-resp-${Date.now()}`,
+      authorId: sellerId,
+      authorName: sellerName,
+      authorAvatar: sellerAvatar,
+      content: `Tawaran harga dari @${offer.buyerName} telah DISETUJUI oleh penjual! Silakan lanjutkan transaksi via WhatsApp.`,
+      createdAt: "Baru saja",
+      isOffer: true,
+      offerId: offer.id,
+      offerPrice: offer.offerPrice,
+      offerStatus: "accepted",
+    };
+
+    catalog.comments.push(feedbackComment);
+    saveDatabase();
+
+    const sanitizedCatalog = sanitizeCatalogForViewer(catalog, sellerId);
+
+    return res.json({
+      success: true,
+      message: `Tawaran dari ${offer.buyerName} sebesar ${offer.offerPrice} berhasil DISETUJUI!`,
+      offer,
+      catalog: sanitizedCatalog,
+    });
+  });
+
+  // 19b. Penjual Mengajukan Harga Banding Secara Manual
+  // "contoh Budi menawar 700rb namun penjual belum sepakat dengan harga tersebut dan dapat mengajukan harga ke si Budi dengan harga yang penjual inginkan"
+  app.post("/api/catalog/:id/offer/:offerId/counter", (req, res) => {
+    const { id, offerId } = req.params;
+    const { sellerId, counterPrice, counterNote } = req.body;
+
+    if (!counterPrice || !String(counterPrice).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nominal harga banding yang diajukan penjual wajib diisi.",
+      });
+    }
+
+    const catalog = catalogs.find((c) => c.id === id);
+    if (!catalog) {
+      return res.status(404).json({ success: false, message: "Katalog tidak ditemukan." });
+    }
+
+    if (catalog.userId !== sellerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya penjual pemilik katalog ini yang berhak mengajukan harga banding.",
+      });
+    }
+
+    catalog.offers = catalog.offers || [];
+    const offer = catalog.offers.find((o) => o.id === offerId);
+    if (!offer) {
+      return res.status(404).json({ success: false, message: "Penawaran tidak ditemukan." });
+    }
+
+    const trimmedCounterPrice = String(counterPrice).trim();
+    const trimmedCounterNote = counterNote ? String(counterNote).trim() : "";
+
+    offer.status = "countered";
+    offer.counterPrice = trimmedCounterPrice;
+    offer.counterNote = trimmedCounterNote;
+    offer.counteredAt = "Baru saja";
+    offer.updatedAt = Date.now();
+
+    // Perbarui status di seluruh komentar penawaran terkait
+    catalog.comments.forEach((cm) => {
+      if (cm.offerId === offerId) {
+        cm.offerStatus = "countered";
+        cm.counterPrice = trimmedCounterPrice;
+        cm.counterNote = trimmedCounterNote;
+      }
+    });
+
+    // Tambahkan catatan komentar harga banding dari penjual
+    const sellerUser = users.find((u) => u.id === sellerId);
+    const sellerName = sellerUser ? sellerUser.username : catalog.username;
+    const sellerAvatar = sellerUser ? sellerUser.avatar : catalog.userAvatar;
+
+    const counterComment: Comment = {
+      id: `comm-counter-${Date.now()}`,
+      authorId: sellerId,
+      authorName: sellerName,
+      authorAvatar: sellerAvatar,
+      content: trimmedCounterNote
+        ? `Penjual mengajukan harga banding: "${trimmedCounterNote}"`
+        : `Penjual mengajukan harga banding kepada @${offer.buyerName}.`,
+      createdAt: "Baru saja",
+      isOffer: true,
+      offerId: offer.id,
+      offerPrice: offer.offerPrice,
+      counterPrice: trimmedCounterPrice,
+      counterNote: trimmedCounterNote,
+      offerStatus: "countered",
+    };
+
+    catalog.comments.push(counterComment);
+    saveDatabase();
+
+    console.log(
+      `[HARGA BANDING] Penjual ${sellerName} mengajukan harga banding ${trimmedCounterPrice} ke ${offer.buyerName} (Tawaran awal: ${offer.offerPrice})`
+    );
+
+    const sanitizedCatalog = sanitizeCatalogForViewer(catalog, sellerId);
+
+    return res.json({
+      success: true,
+      message: `Harga banding sebesar ${trimmedCounterPrice} berhasil diajukan ke @${offer.buyerName}! Hanya Anda dan calon pembeli tersebut yang dapat melihat nominal ini.`,
+      offer,
+      catalog: sanitizedCatalog,
+    });
+  });
+
+  // 19c. Calon Pembeli Menyetujui / Menyepakati Harga Banding dari Penjual
+  app.post("/api/catalog/:id/offer/:offerId/buyer-accept", (req, res) => {
+    const { id, offerId } = req.params;
+    const { buyerId } = req.body;
+
+    const catalog = catalogs.find((c) => c.id === id);
+    if (!catalog) {
+      return res.status(404).json({ success: false, message: "Katalog tidak ditemukan." });
+    }
+
+    catalog.offers = catalog.offers || [];
+    const offer = catalog.offers.find((o) => o.id === offerId);
+    if (!offer) {
+      return res.status(404).json({ success: false, message: "Penawaran tidak ditemukan." });
+    }
+
+    if (offer.buyerId !== buyerId) {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya calon pembeli yang bersangkutan yang dapat menyepakati harga banding ini.",
+      });
+    }
+
+    const finalPrice = offer.counterPrice || offer.offerPrice;
+    offer.status = "accepted";
+    offer.acceptedPrice = finalPrice;
+    offer.updatedAt = Date.now();
+
+    catalog.comments.forEach((cm) => {
+      if (cm.offerId === offerId) {
+        cm.offerStatus = "accepted";
+      }
+    });
+
+    const acceptComment: Comment = {
+      id: `comm-buyer-acc-${Date.now()}`,
+      authorId: buyerId,
+      authorName: offer.buyerName,
+      authorAvatar: offer.buyerAvatar,
+      content: `Sepakat! @${offer.buyerName} menyetujui harga banding ${finalPrice}. Silakan lanjutkan transaksi via WhatsApp.`,
+      createdAt: "Baru saja",
+      isOffer: true,
+      offerId: offer.id,
+      offerPrice: offer.offerPrice,
+      counterPrice: offer.counterPrice,
+      offerStatus: "accepted",
+    };
+
+    catalog.comments.push(acceptComment);
+    saveDatabase();
+
+    const sanitizedCatalog = sanitizeCatalogForViewer(catalog, buyerId);
+
+    return res.json({
+      success: true,
+      message: `Selamat! Anda telah menyepakati harga banding sebesar ${finalPrice}. Silakan hubungi penjual via WhatsApp untuk transaksi.`,
+      offer,
+      catalog: sanitizedCatalog,
+    });
+  });
+
+  // 20. Hapus Akun Permanen dari Database (Turso Database & File)
   // "Pada halaman pengaturan buat tombol hapus akun ketika sudah disetujui maka akun tersebut terhapus permanen dari database"
   app.delete("/api/user/delete-account", async (req, res) => {
     const { userId } = req.body;

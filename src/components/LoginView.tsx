@@ -42,7 +42,14 @@ export const LoginView: React.FC<Props> = ({
         body: JSON.stringify({ username: username.trim(), password }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const rawText = await response.text();
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error("[Login] Response parse error:", parseErr);
+        throw new Error("Gagal memproses respon masuk. Silakan coba lagi.");
+      }
 
       if (!response.ok || !data.success) {
         throw new Error(data.message || "Gagal masuk. Periksa username dan password.");

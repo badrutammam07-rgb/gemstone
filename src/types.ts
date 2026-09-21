@@ -10,6 +10,25 @@ export interface User {
   joinDate: string;
 }
 
+export interface NegotiationOffer {
+  id: string;
+  catalogId: string;
+  buyerId: string;
+  buyerName: string;
+  buyerAvatar: string;
+  buyerPhone?: string;
+  sellerId: string;
+  offerPrice: string; // Tawaran awal dari calon pembeli (misal "Rp 700.000")
+  note?: string;
+  status: "pending" | "countered" | "accepted"; // Penjual tidak boleh menolak, melainkan sepakat atau mengajukan harga banding
+  counterPrice?: string; // Nominal harga banding yang diajukan penjual secara manual (misal "Rp 850.000")
+  counterNote?: string; // Catatan dari penjual mengenai harga banding
+  counteredAt?: string;
+  acceptedPrice?: string; // Nominal yang akhirnya disepakati
+  createdAt: string;
+  updatedAt?: number;
+}
+
 export interface Comment {
   id: string;
   authorId: string;
@@ -17,6 +36,13 @@ export interface Comment {
   authorAvatar: string;
   content: string;
   createdAt: string;
+  // Field khusus fitur negosiasi privat
+  isOffer?: boolean;
+  offerId?: string;
+  offerPrice?: string; // Hanya ditampilkan ke calon pembeli yang menawar & penjual
+  counterPrice?: string; // Harga banding dari penjual (privat, hanya buyer & seller)
+  counterNote?: string;
+  offerStatus?: "pending" | "countered" | "accepted";
 }
 
 export interface CatalogItem {
@@ -38,4 +64,5 @@ export interface CatalogItem {
   comments: Comment[];
   likes: string[];       // array of userIds
   createdAt: string;
+  offers?: NegotiationOffer[]; // Daftar penawaran harga privat
 }
