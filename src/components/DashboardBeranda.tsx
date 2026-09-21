@@ -20,9 +20,15 @@ import {
   CheckCircle2,
   XCircle,
   ArrowLeftRight,
+  Play,
+  Video,
+  Film,
+  Image as ImageIcon,
 } from "lucide-react";
 import { User, CatalogItem, NegotiationOffer } from "../types";
 import { formatToRupiah } from "../utils/currencyUtils";
+import { parseVideoUrl } from "../utils/videoUtils";
+import { CatalogVideoPlayer } from "./CatalogVideoPlayer";
 import { NegotiateModal } from "./NegotiateModal";
 import { SellerOffersModal } from "./SellerOffersModal";
 
@@ -54,6 +60,14 @@ export const DashboardBeranda: React.FC<Props> = ({
   // State Fitur Negosiasi Privat
   const [negotiatingCatalog, setNegotiatingCatalog] = useState<CatalogItem | null>(null);
   const [viewingOffersCatalog, setViewingOffersCatalog] = useState<CatalogItem | null>(null);
+
+  // Tab Media (Foto vs Video Detail) per kartu katalog
+  const [activeMediaTabs, setActiveMediaTabs] = useState<Record<string, "photo" | "video">>({});
+
+  const getActiveTab = (itemId: string) => activeMediaTabs[itemId] || "photo";
+  const toggleMediaTab = (itemId: string, tab: "photo" | "video") => {
+    setActiveMediaTabs((prev) => ({ ...prev, [itemId]: tab }));
+  };
 
   useEffect(() => {
     fetchFeed();
@@ -315,35 +329,123 @@ export const DashboardBeranda: React.FC<Props> = ({
                   </div>
                 </div>
 
-                {/* Body: Foto Katalog dengan Tampilan Penuh saat Diklik */}
-                {item.images && item.images.length > 0 && (
-                  <div
-                    onClick={() => {
-                      if (onOpenFullscreen) {
-                        onOpenFullscreen({
-                          imageUrl: item.images[0],
-                          title: item.gemType,
-                          dimensions: item.dimensions,
-                          price: formatToRupiah(item.price),
-                          sellerName: item.username,
-                        });
-                      }
-                    }}
-                    className="relative bg-black w-full overflow-hidden max-h-[440px] cursor-pointer group select-none"
-                    title="Klik untuk melihat foto batu dalam tampilan penuh"
-                  >
-                    <img
-                      src={item.images[0]}
-                      alt={item.gemType}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover max-h-[440px] group-hover:scale-105 transition-transform duration-300"
+                {/* Media Switcher Tab Header: Foto Permata vs Video Detail */}
+                <div className="flex items-center justify-between px-3.5 py-2 bg-slate-950 border-y border-slate-800/80">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleMediaTab(item.id, "photo")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        getActiveTab(item.id) === "photo"
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                          : "text-slate-400 hover:text-white hover:bg-slate-900"
+                      }`}
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      <span>Foto Permata</span>
+                    </button>
+
+                    {item.videoUrl ? (() => {
+                      const parsed = parseVideoUrl(item.videoUrl);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => toggleMediaTab(item.id, "video")}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                            getActiveTab(item.id) === "video"
+                              ? "bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm"
+                              : "text-slate-300 hover:text-white bg-slate-900/80 border border-slate-800"
+                          }`}
+                        >
+                          <Play className="w-3 h-3 fill-current text-rose-400" />
+                          <span>Video Detail</span>
+                          <span className="text-[10px] opacity-75 hidden sm:inline">
+                            ({parsed.platformName})
+                          </span>
+                        </button>
+                      );
+                    })() : null}
+                  </div>
+
+                  {item.videoUrl && getActiveTab(item.id) === "photo" && (
+                    <button
+                      type="button"
+                      onClick={() => toggleMediaTab(item.id, "video")}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Film className="w-3.5 h-3.5" />
+                      <span>Putar Video Detail</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Media Body: Video Player Langsung vs Foto Fullscreen */}
+                {getActiveTab(item.id) === "video" && item.videoUrl ? (
+                  <div className="w-full bg-black p-2 sm:p-3">
+                    <CatalogVideoPlayer
+                      videoUrl={item.videoUrl}
+                      gemTitle={item.gemType}
                     />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-200 pointer-events-none">
-                      <span className="bg-slate-900/90 text-white text-xs font-bold px-3.5 py-1.5 rounded-full border border-slate-700 shadow-xl flex items-center gap-1.5 backdrop-blur-md">
-                        <Maximize2 className="w-4 h-4 text-emerald-400" />
-                        Buka Tampilan Penuh
-                      </span>
-                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {item.images && item.images.length > 0 && (
+                      <div
+                        onClick={() => {
+                          if (onOpenFullscreen) {
+                            onOpenFullscreen({
+                              imageUrl: item.images[0],
+                              title: item.gemType,
+                              dimensions: item.dimensions,
+                              price: formatToRupiah(item.price),
+                              sellerName: item.username,
+                            });
+                          }
+                        }}
+                        className="relative bg-black w-full overflow-hidden max-h-[440px] cursor-pointer group select-none"
+                        title="Klik untuk melihat foto batu dalam tampilan penuh"
+                      >
+                        <img
+                          src={item.images[0]}
+                          alt={item.gemType}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover max-h-[440px] group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-200 pointer-events-none">
+                          <span className="bg-slate-900/90 text-white text-xs font-bold px-3.5 py-1.5 rounded-full border border-slate-700 shadow-xl flex items-center gap-1.5 backdrop-blur-md">
+                            <Maximize2 className="w-4 h-4 text-emerald-400" />
+                            Buka Tampilan Penuh
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Banner Ajakan Menonton Video Detail Batu */}
+                    {item.videoUrl && (
+                      <div className="px-3.5 py-2.5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="p-1.5 bg-rose-500/15 text-rose-400 rounded-lg shrink-0">
+                            <Play className="w-4 h-4 fill-rose-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-white block truncate">
+                              Video Detail Kilau & Giwang Tersedia
+                            </span>
+                            <span className="text-[10px] text-slate-400 block truncate">
+                              Periksa detail batu 360° sebelum membeli
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleMediaTab(item.id, "video")}
+                          className="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition-colors shadow-sm flex items-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>Tonton Video</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 

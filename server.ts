@@ -71,6 +71,7 @@ interface CatalogItem {
   dimensions: string;
   price: string;
   description?: string;
+  videoUrl: string;
   images: string[];
   status: "koleksi" | "dijual" | "terjual";
   isPublished: boolean;
@@ -840,13 +841,36 @@ async function startServer() {
 
   // 12. Create New Catalog (Input Katalog di Profile)
   // "setiap katalog berisi gambar dan deskripsi yang berisi (jenis batu, dimensi, dan nominal harga)dan untuk membuat katalog ada tombol input katalog, jika sudah menekan tombol save maka masuk ke halaman profile user"
+  // "user selain mengisi foto dan keterangan, wajib mengisi URL video baik dari youtube, tiktok ataupun Instagram yang dapat diputar langsung diaplikasi agar calon pembeli melihat secara detail batu yang ingin dibeli."
   app.post("/api/catalog", (req, res) => {
-    const { userId, gemType, dimensions, price, description, images } = req.body;
+    const { userId, gemType, dimensions, price, description, images, videoUrl } = req.body;
 
     if (!userId || !gemType || !dimensions || !price) {
       return res.status(400).json({
         success: false,
         message: "Jenis batu, dimensi, dan nominal harga wajib diisi.",
+      });
+    }
+
+    if (!videoUrl || typeof videoUrl !== "string" || !videoUrl.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "URL video wajib diisi (YouTube, TikTok, atau Instagram) agar calon pembeli dapat melihat detail batu.",
+      });
+    }
+
+    const cleanVideoUrl = videoUrl.trim();
+    const isYt = /(?:youtube\.com|youtu\.be)/i.test(cleanVideoUrl);
+    const isTiktok = /tiktok\.com/i.test(cleanVideoUrl);
+    const isIg = /instagram\.com/i.test(cleanVideoUrl);
+    const isDirectVid =
+      /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(cleanVideoUrl) ||
+      (cleanVideoUrl.includes("cloudinary.com") && cleanVideoUrl.includes("/video/"));
+
+    if (!isYt && !isTiktok && !isIg && !isDirectVid) {
+      return res.status(400).json({
+        success: false,
+        message: "URL video tidak valid. Wajib menyertakan tautan resmi dari YouTube, TikTok, atau Instagram.",
       });
     }
 
@@ -875,6 +899,7 @@ async function startServer() {
       dimensions: dimensions.trim(),
       price: price.trim(),
       description: description ? description.trim() : "",
+      videoUrl: cleanVideoUrl,
       images: finalImages,
       status: "koleksi", // default masuk koleksi profile dulu
       isPublished: false,

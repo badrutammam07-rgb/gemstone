@@ -12,6 +12,13 @@ import {
   Maximize2,
   Trash2,
   Banknote,
+  Video,
+  Film,
+  Youtube,
+  Instagram,
+  Play,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { CatalogItem } from "../types";
 import { compressImageFileToMax100KB } from "../utils/imageUtils";
@@ -21,6 +28,8 @@ import {
   parseRupiahNumber,
   rupiahToTerbilang,
 } from "../utils/currencyUtils";
+import { parseVideoUrl, SAMPLE_GEM_VIDEOS } from "../utils/videoUtils";
+import { CatalogVideoPlayer } from "./CatalogVideoPlayer";
 
 interface Props {
   userId: string;
@@ -42,6 +51,8 @@ export const InputCatalogModal: React.FC<Props> = ({
   const [price, setPrice] = useState("");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [compressedSizeKb, setCompressedSizeKb] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -106,6 +117,15 @@ export const InputCatalogModal: React.FC<Props> = ({
       return;
     }
 
+    const parsedVideo = parseVideoUrl(videoUrl);
+    if (!videoUrl.trim() || !parsedVideo.isValid) {
+      setErrorMessage(
+        parsedVideo.error ||
+          "URL video (YouTube, TikTok, atau Instagram) wajib diisi agar calon pembeli dapat melihat detail batu."
+      );
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -141,6 +161,7 @@ export const InputCatalogModal: React.FC<Props> = ({
           dimensions: dimensions.trim(),
           price: finalPriceString,
           description: description.trim(),
+          videoUrl: videoUrl.trim(),
           images: [finalImg],
         }),
       });
@@ -158,6 +179,8 @@ export const InputCatalogModal: React.FC<Props> = ({
       setPrice("");
       setDescription("");
       setImageUrl("");
+      setVideoUrl("");
+      setShowVideoPreview(false);
       setCompressedSizeKb(null);
     } catch (err: any) {
       setErrorMessage(err.message || "Terjadi kesalahan pada server backend.");
@@ -316,6 +339,113 @@ export const InputCatalogModal: React.FC<Props> = ({
               placeholder="Jelaskan kualitas giwang, warna kristal, memo lab (jika ada), ikatan ring perak/emas..."
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
             />
+          </div>
+
+          {/* URL Video Detail Batu Mulia (Wajib: YouTube / TikTok / Instagram) */}
+          <div className="space-y-2.5 bg-slate-950/80 p-3.5 sm:p-4 rounded-2xl border border-slate-800">
+            <div className="flex items-center justify-between flex-wrap gap-1.5">
+              <label className="text-slate-200 font-bold text-xs sm:text-sm flex items-center gap-2">
+                <Video className="w-4 h-4 text-rose-400" />
+                <span>URL Video Detail Batu Permata</span>
+                <span className="bg-rose-950 text-rose-300 text-[10px] font-black px-2 py-0.5 rounded-md border border-rose-800 tracking-wide">
+                  WAJIB
+                </span>
+              </label>
+              <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                <span className="flex items-center gap-1 text-red-400 font-semibold">
+                  <Youtube className="w-3 h-3" /> YouTube
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1 text-cyan-400 font-semibold">
+                  <Film className="w-3 h-3" /> TikTok
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1 text-pink-400 font-semibold">
+                  <Instagram className="w-3 h-3" /> Instagram
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Wajib menyertakan link video (YouTube Shorts/Video, TikTok, atau Instagram Reel) agar calon pembeli dapat memutar dan melihat kilau, giwang, dan detail 360° batu langsung di dalam aplikasi.
+            </p>
+
+            <div className="relative flex items-center">
+              <input
+                id="input-catalog-videourl"
+                type="url"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+                placeholder="Contoh: https://www.youtube.com/shorts/... atau https://vt.tiktok.com/..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-xs sm:text-sm placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono"
+                required
+              />
+            </div>
+
+            {/* Validasi & Deteksi Platform Real-time */}
+            {videoUrl.trim() && (() => {
+              const parsed = parseVideoUrl(videoUrl);
+              if (parsed.isValid) {
+                return (
+                  <div className="flex items-center justify-between gap-2 p-2 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs">
+                    <span className="text-emerald-300 flex items-center gap-1.5 font-semibold text-[11px]">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      Link {parsed.platformName} terverifikasi & siap diputar langsung
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowVideoPreview(!showVideoPreview)}
+                      className="text-[11px] font-bold text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                    >
+                      <Play className="w-3 h-3 text-emerald-400" />
+                      <span>{showVideoPreview ? "Tutup Pratinjau" : "Uji Putar"}</span>
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <div className="p-2 bg-amber-950/40 border border-amber-800/60 rounded-xl text-[11px] text-amber-300 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>{parsed.error}</span>
+                </div>
+              );
+            })()}
+
+            {/* Pratinjau Video Pemutar Langsung */}
+            {showVideoPreview && videoUrl.trim() && parseVideoUrl(videoUrl).isValid && (
+              <div className="pt-2">
+                <CatalogVideoPlayer
+                  videoUrl={videoUrl}
+                  gemTitle={gemType || "Pratinjau Permata"}
+                  compact={true}
+                />
+              </div>
+            )}
+
+            {/* Pilihan Contoh Cepat Video untuk Kemudahan */}
+            <div className="pt-1">
+              <span className="text-[10px] text-slate-400 block mb-1 font-medium">
+                Pilihan contoh tautan video untuk uji coba cepat:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {SAMPLE_GEM_VIDEOS.map((sample) => (
+                  <button
+                    key={sample.label}
+                    type="button"
+                    onClick={() => {
+                      setVideoUrl(sample.url);
+                      setShowVideoPreview(true);
+                    }}
+                    className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg border border-slate-700/80 transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    {sample.platform === "youtube" && <Youtube className="w-3 h-3 text-red-400" />}
+                    {sample.platform === "tiktok" && <Film className="w-3 h-3 text-cyan-400" />}
+                    {sample.platform === "instagram" && <Instagram className="w-3 h-3 text-pink-400" />}
+                    <span>{sample.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Foto Permata dengan Unggah Media & Kompresi Otomatis Max 100KB */}

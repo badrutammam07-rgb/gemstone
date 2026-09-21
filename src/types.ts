@@ -54,6 +54,7 @@ export interface CatalogItem {
   dimensions: string;    // Dimensi (misal: 18 x 14 x 7 mm)
   price: string;         // Nominal harga (misal: Rp 3.500.000)
   description?: string;  // Deskripsi tambahan
+  videoUrl: string;      // URL video wajib (YouTube, TikTok, Instagram) yang dapat diputar langsung di aplikasi
   images: string[];
   status: "koleksi" | "dijual" | "terjual"; // status: koleksi pribadi, dijual (ke beranda), atau terjual/laku
   isPublished: boolean;
