@@ -91,27 +91,47 @@ async function initTablesOnClient(client: Client): Promise<void> {
   `);
 
   await client.execute(`
-    CREATE TABLE IF NOT EXISTS catalogs (
+    CREATE TABLE IF NOT EXISTS catalogs_v2 (
       id TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL,
-      owner_username TEXT NOT NULL,
-      owner_phone TEXT NOT NULL,
-      owner_avatar TEXT,
-      title TEXT NOT NULL,
-      stone_type TEXT NOT NULL,
-      origin TEXT,
-      dimensions TEXT,
-      ring_material TEXT,
-      price INTEGER NOT NULL DEFAULT 0,
-      is_for_sale INTEGER NOT NULL DEFAULT 1,
-      lab_memo TEXT,
+      user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      user_avatar TEXT,
+      gem_type TEXT NOT NULL,
+      dimensions TEXT NOT NULL,
+      price TEXT NOT NULL,
       description TEXT,
+      video_url TEXT NOT NULL,
       images TEXT NOT NULL DEFAULT '[]',
-      likes TEXT DEFAULT '[]',
-      comments TEXT DEFAULT '[]',
-      last_bump_time INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+      status TEXT NOT NULL DEFAULT 'koleksi',
+      is_published INTEGER NOT NULL DEFAULT 0,
+      published_at INTEGER,
+      bumped_at INTEGER,
+      sold_at INTEGER,
+      auto_delete_at INTEGER,
+      comments TEXT NOT NULL DEFAULT '[]',
+      likes TEXT NOT NULL DEFAULT '[]',
+      offers TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT DEFAULT 'Hari ini'
+    );
+  `);
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS transaction_rooms (
+      id TEXT PRIMARY KEY,
+      catalog_id TEXT NOT NULL,
+      offer_id TEXT NOT NULL,
+      gem_type TEXT NOT NULL,
+      dimensions TEXT NOT NULL,
+      gem_image TEXT,
+      video_url TEXT,
+      agreed_price TEXT NOT NULL,
+      seller_data TEXT NOT NULL,
+      buyer_data TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_activity_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      messages TEXT NOT NULL DEFAULT '[]'
     );
   `);
 }
@@ -341,7 +361,7 @@ export async function updateUserProfile(
 export async function deleteUserAndData(id: string): Promise<boolean> {
   try {
     await safeExecute({
-      sql: "DELETE FROM catalogs WHERE owner_id = ?",
+      sql: "DELETE FROM catalogs_v2 WHERE user_id = ?",
       args: [id],
     });
     const rs = await safeExecute({
@@ -352,5 +372,276 @@ export async function deleteUserAndData(id: string): Promise<boolean> {
   } catch (err) {
     console.error("[Turso DB] deleteUserAndData error:", err);
     return false;
+  }
+}
+
+export async function getAllUsers(): Promise<TursoUser[]> {
+  try {
+    const rs = await safeExecute("SELECT * FROM users ORDER BY created_at DESC");
+    if (!rs || !rs.rows) return [];
+    return rs.rows.map((row: any) => ({
+      id: String(row.id),
+      username: String(row.username),
+      phone: String(row.phone),
+      password: String(row.password),
+      role: String(row.role || "Anggota Komunitas Batu Mulia"),
+      avatar: String(row.avatar || ""),
+      bio: String(row.bio || ""),
+      followers: JSON.parse(String(row.followers || "[]")),
+      following: JSON.parse(String(row.following || "[]")),
+      joinDate: String(row.join_date || "Terdaftar"),
+    }));
+  } catch (err) {
+    console.error("[Turso DB] getAllUsers error:", err);
+    return [];
+  }
+}
+
+export async function updateUserFollow(
+  id: string,
+  followers: string[],
+  following: string[]
+): Promise<boolean> {
+  try {
+    const rs = await safeExecute({
+      sql: `UPDATE users SET followers = ?, following = ? WHERE id = ?`,
+      args: [JSON.stringify(followers), JSON.stringify(following), id],
+    });
+    return (rs?.rowsAffected || 0) > 0;
+  } catch (err) {
+    console.error("[Turso DB] updateUserFollow error:", err);
+    return false;
+  }
+}
+
+export interface TursoCatalogItem {
+  id: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  gemType: string;
+  dimensions: string;
+  price: string;
+  description?: string;
+  videoUrl: string;
+  images: string[];
+  status: "koleksi" | "dijual" | "terjual";
+  isPublished: boolean;
+  publishedAt?: number;
+  bumpedAt?: number;
+  soldAt?: number;
+  autoDeleteAt?: number;
+  comments: any[];
+  likes: string[];
+  createdAt: string;
+  offers?: any[];
+}
+
+export async function getAllCatalogsFromTurso(): Promise<TursoCatalogItem[]> {
+  try {
+    const rs = await safeExecute("SELECT * FROM catalogs_v2 ORDER BY rowid DESC");
+    if (!rs || !rs.rows) return [];
+    return rs.rows.map((row: any) => ({
+      id: String(row.id),
+      userId: String(row.user_id),
+      username: String(row.username),
+      userAvatar: String(row.user_avatar || ""),
+      gemType: String(row.gem_type),
+      dimensions: String(row.dimensions),
+      price: String(row.price),
+      description: row.description ? String(row.description) : "",
+      videoUrl: String(row.video_url || ""),
+      images: JSON.parse(String(row.images || "[]")),
+      status: String(row.status || "koleksi") as any,
+      isPublished: Boolean(row.is_published),
+      publishedAt: row.published_at ? Number(row.published_at) : undefined,
+      bumpedAt: row.bumped_at ? Number(row.bumped_at) : undefined,
+      soldAt: row.sold_at ? Number(row.sold_at) : undefined,
+      autoDeleteAt: row.auto_delete_at ? Number(row.auto_delete_at) : undefined,
+      comments: JSON.parse(String(row.comments || "[]")),
+      likes: JSON.parse(String(row.likes || "[]")),
+      offers: JSON.parse(String(row.offers || "[]")),
+      createdAt: String(row.created_at || "Hari ini"),
+    }));
+  } catch (err) {
+    console.error("[Turso DB] getAllCatalogsFromTurso error:", err);
+    return [];
+  }
+}
+
+export async function saveCatalogToTurso(c: TursoCatalogItem): Promise<boolean> {
+  try {
+    await safeExecute({
+      sql: `INSERT OR REPLACE INTO catalogs_v2 
+        (id, user_id, username, user_avatar, gem_type, dimensions, price, description, video_url, images, status, is_published, published_at, bumped_at, sold_at, auto_delete_at, comments, likes, offers, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        c.id,
+        c.userId,
+        c.username,
+        c.userAvatar,
+        c.gemType,
+        c.dimensions,
+        c.price,
+        c.description || "",
+        c.videoUrl,
+        JSON.stringify(c.images || []),
+        c.status || "koleksi",
+        c.isPublished ? 1 : 0,
+        c.publishedAt || null,
+        c.bumpedAt || null,
+        c.soldAt || null,
+        c.autoDeleteAt || null,
+        JSON.stringify(c.comments || []),
+        JSON.stringify(c.likes || []),
+        JSON.stringify(c.offers || []),
+        c.createdAt || "Hari ini",
+      ],
+    });
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] saveCatalogToTurso error:", err);
+    return false;
+  }
+}
+
+export async function deleteCatalogFromTurso(id: string): Promise<boolean> {
+  try {
+    const rs = await safeExecute({
+      sql: "DELETE FROM catalogs_v2 WHERE id = ?",
+      args: [id],
+    });
+    return (rs?.rowsAffected || 0) > 0;
+  } catch (err) {
+    console.error("[Turso DB] deleteCatalogFromTurso error:", err);
+    return false;
+  }
+}
+
+export interface TursoTransactionRoom {
+  id: string;
+  catalogId: string;
+  offerId: string;
+  gemType: string;
+  dimensions: string;
+  gemImage: string;
+  videoUrl?: string;
+  agreedPrice: string;
+  seller: any;
+  buyer: any;
+  status: "pending_verification" | "active" | "expired";
+  createdAt: number;
+  lastActivityAt: number;
+  expiresAt: number;
+  messages: any[];
+}
+
+export async function getAllTransactionRoomsFromTurso(): Promise<TursoTransactionRoom[]> {
+  try {
+    const rs = await safeExecute("SELECT * FROM transaction_rooms ORDER BY created_at DESC");
+    if (!rs || !rs.rows) return [];
+    return rs.rows.map((row: any) => ({
+      id: String(row.id),
+      catalogId: String(row.catalog_id),
+      offerId: String(row.offer_id),
+      gemType: String(row.gem_type),
+      dimensions: String(row.dimensions),
+      gemImage: String(row.gem_image || ""),
+      videoUrl: row.video_url ? String(row.video_url) : undefined,
+      agreedPrice: String(row.agreed_price),
+      seller: JSON.parse(String(row.seller_data || "{}")),
+      buyer: JSON.parse(String(row.buyer_data || "{}")),
+      status: String(row.status) as any,
+      createdAt: Number(row.created_at),
+      lastActivityAt: Number(row.last_activity_at),
+      expiresAt: Number(row.expires_at),
+      messages: JSON.parse(String(row.messages || "[]")),
+    }));
+  } catch (err) {
+    console.error("[Turso DB] getAllTransactionRoomsFromTurso error:", err);
+    return [];
+  }
+}
+
+export async function saveTransactionRoomToTurso(r: TursoTransactionRoom): Promise<boolean> {
+  try {
+    await safeExecute({
+      sql: `INSERT OR REPLACE INTO transaction_rooms
+        (id, catalog_id, offer_id, gem_type, dimensions, gem_image, video_url, agreed_price, seller_data, buyer_data, status, created_at, last_activity_at, expires_at, messages)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        r.id,
+        r.catalogId,
+        r.offerId,
+        r.gemType,
+        r.dimensions,
+        r.gemImage,
+        r.videoUrl || null,
+        r.agreedPrice,
+        JSON.stringify(r.seller),
+        JSON.stringify(r.buyer),
+        r.status,
+        r.createdAt,
+        r.lastActivityAt,
+        r.expiresAt,
+        JSON.stringify(r.messages || []),
+      ],
+    });
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] saveTransactionRoomToTurso error:", err);
+    return false;
+  }
+}
+
+export async function deleteTransactionRoomFromTurso(id: string): Promise<boolean> {
+  try {
+    const rs = await safeExecute({
+      sql: "DELETE FROM transaction_rooms WHERE id = ?",
+      args: [id],
+    });
+    return (rs?.rowsAffected || 0) > 0;
+  } catch (err) {
+    console.error("[Turso DB] deleteTransactionRoomFromTurso error:", err);
+    return false;
+  }
+}
+
+export async function deleteExpiredSoldCatalogsFromTurso(now: number = Date.now()): Promise<number> {
+  try {
+    const rs = await safeExecute({
+      sql: "DELETE FROM catalogs_v2 WHERE status = 'terjual' AND auto_delete_at IS NOT NULL AND auto_delete_at <= ?",
+      args: [now],
+    });
+    return rs?.rowsAffected || 0;
+  } catch (err) {
+    console.error("[Turso DB] deleteExpiredSoldCatalogsFromTurso error:", err);
+    return 0;
+  }
+}
+
+export async function deleteInactiveTransactionRoomsFromTurso(sevenDaysAgo: number): Promise<number> {
+  try {
+    const rs = await safeExecute({
+      sql: "DELETE FROM transaction_rooms WHERE last_activity_at < ?",
+      args: [sevenDaysAgo],
+    });
+    return rs?.rowsAffected || 0;
+  } catch (err) {
+    console.error("[Turso DB] deleteInactiveTransactionRoomsFromTurso error:", err);
+    return 0;
+  }
+}
+
+export async function deleteTransactionRoomsByCatalogId(catalogId: string): Promise<number> {
+  try {
+    const rs = await safeExecute({
+      sql: "DELETE FROM transaction_rooms WHERE catalog_id = ?",
+      args: [catalogId],
+    });
+    return rs?.rowsAffected || 0;
+  } catch (err) {
+    console.error("[Turso DB] deleteTransactionRoomsByCatalogId error:", err);
+    return 0;
   }
 }

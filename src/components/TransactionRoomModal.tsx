@@ -313,12 +313,31 @@ export const TransactionRoomModal: React.FC<Props> = ({
     setErrorMessage(null);
 
     try {
+      let finalFaceUrl = capturedFacePhoto;
+
+      // Unggah foto Face ID ke Cloudinary
+      if (finalFaceUrl && finalFaceUrl.startsWith("data:")) {
+        try {
+          const upRes = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: finalFaceUrl, folder: "face_id" }),
+          });
+          const upData = await upRes.json();
+          if (upData && upData.url) {
+            finalFaceUrl = upData.url;
+          }
+        } catch (uploadErr) {
+          console.warn("[Cloudinary] Upload face id photo warning:", uploadErr);
+        }
+      }
+
       const res = await fetch(`/api/rooms/${room.id}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: currentUser.id,
-          facePhotoUrl: capturedFacePhoto,
+          facePhotoUrl: finalFaceUrl,
           latitude: gpsLocation.latitude,
           longitude: gpsLocation.longitude,
           accuracyMeters: gpsLocation.accuracyMeters,

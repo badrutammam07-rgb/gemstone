@@ -7,10 +7,21 @@ import {
   getUserByUsernameOrPhone,
   getUserById,
   getUserByPhone,
+  getAllUsers,
   insertUser,
   updatePasswordByPhone,
   updateUserProfile,
+  updateUserFollow,
   deleteUserAndData,
+  getAllCatalogsFromTurso,
+  saveCatalogToTurso,
+  deleteCatalogFromTurso,
+  getAllTransactionRoomsFromTurso,
+  saveTransactionRoomToTurso,
+  deleteTransactionRoomFromTurso,
+  deleteExpiredSoldCatalogsFromTurso,
+  deleteInactiveTransactionRoomsFromTurso,
+  deleteTransactionRoomsByCatalogId,
 } from "./server/turso";
 import { uploadMediaPhoto } from "./server/cloudinary";
 
@@ -179,23 +190,83 @@ const users: User[] = initialDb.users;
 const catalogs: CatalogItem[] = initialDb.catalogs;
 let transactionRooms: TransactionRoom[] = initialDb.transactionRooms;
 
-// 1 Minggu dalam Milidetik (7 hari) untuk masa kadaluarsa jika tidak aktif komunikasinya
+// 1 Minggu dalam Milidetik (7 hari) untuk masa kadaluarsa jika tidak aktif komunikasinya / setelah terjual
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-function cleanupExpiredRooms() {
+async function runAutoCleanup() {
   const now = Date.now();
-  const prevCount = transactionRooms.length;
-  // Room otomatis terhapus 1 minggu setelah tidak aktif komunikasinya antara penjual dan pembeli
-  transactionRooms = transactionRooms.filter((r) => {
-    const isExpired = now - r.lastActivityAt > SEVEN_DAYS_MS;
-    return !isExpired;
-  });
-  if (transactionRooms.length !== prevCount) {
-    saveDatabase();
-    console.log(
-      `[ROOM CLEANUP] ${prevCount - transactionRooms.length} room transaksi otomatis terhapus karena tidak aktif lebih dari 1 minggu.`
-    );
+  const sevenDaysAgo = now - SEVEN_DAYS_MS;
+
+  // 1. Identifikasi dan hapus katalog berstatus terjual yang sudah lewat 1 minggu
+  let catalogChanged = false;
+  const expiredCatalogIds: string[] = [];
+
+  for (let i = catalogs.length - 1; i >= 0; i--) {
+    const item = catalogs[i];
+    if (item.status === "terjual" && item.autoDeleteAt && now >= item.autoDeleteAt) {
+      console.log(
+        `[AUTO-CLEANUP] Otomatis menghapus katalog terjual setelah 1 minggu: ${item.gemType} (${item.id})`
+      );
+      expiredCatalogIds.push(item.id);
+      catalogs.splice(i, 1);
+      catalogChanged = true;
+    }
   }
+
+  // 2. Identifikasi dan hapus room transaksi yang tidak aktif selama 1 minggu ATAU terhubung ke katalog yang sudah terhapus
+  let roomsChanged = false;
+  const expiredRoomIds: string[] = [];
+
+  transactionRooms = transactionRooms.filter((r) => {
+    const isInactive1Week = now - r.lastActivityAt > SEVEN_DAYS_MS;
+    const isCatalogDeleted = expiredCatalogIds.includes(r.catalogId);
+    if (isInactive1Week || isCatalogDeleted) {
+      expiredRoomIds.push(r.id);
+      roomsChanged = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (catalogChanged || roomsChanged) {
+    saveDatabase();
+  }
+
+  // 3. Eksekusi pembersihan permanen di database Turso
+  try {
+    const deletedSoldTurso = await deleteExpiredSoldCatalogsFromTurso(now);
+    const deletedRoomsTurso = await deleteInactiveTransactionRoomsFromTurso(sevenDaysAgo);
+
+    for (const cId of expiredCatalogIds) {
+      await deleteCatalogFromTurso(cId);
+      await deleteTransactionRoomsByCatalogId(cId);
+    }
+
+    for (const rId of expiredRoomIds) {
+      await deleteTransactionRoomFromTurso(rId);
+    }
+
+    if (
+      deletedSoldTurso > 0 ||
+      deletedRoomsTurso > 0 ||
+      expiredCatalogIds.length > 0 ||
+      expiredRoomIds.length > 0
+    ) {
+      console.log(
+        `[Turso DB] Auto-cleanup: Terhapus ${deletedSoldTurso + expiredCatalogIds.length} katalog terjual (>1 minggu) & ${deletedRoomsTurso + expiredRoomIds.length} room transaksi tidak aktif (>1 minggu).`
+      );
+    }
+  } catch (err) {
+    console.error("[Turso DB] Auto-cleanup error:", err);
+  }
+}
+
+function cleanupExpiredRooms() {
+  runAutoCleanup().catch((e) => console.warn("[Auto Cleanup Warning]", e));
+}
+
+function cleanupExpiredSoldCatalogs() {
+  runAutoCleanup().catch((e) => console.warn("[Auto Cleanup Warning]", e));
 }
 
 function saveDatabase() {
@@ -213,6 +284,64 @@ function saveDatabase() {
 // Pastikan file database tersinkronisasi
 saveDatabase();
 
+async function syncFromTurso() {
+  try {
+    const tursoUsers = await getAllUsers();
+    if (tursoUsers.length > 0) {
+      users.length = 0;
+      for (const u of tursoUsers) {
+        users.push({
+          id: u.id,
+          username: u.username,
+          phone: u.phone,
+          password: u.password,
+          role: u.role,
+          avatar: u.avatar,
+          bio: u.bio,
+          followers: u.followers || [],
+          following: u.following || [],
+          joinDate: u.joinDate || "Terdaftar",
+        });
+      }
+    } else {
+      // Seed Turso if empty but local has users
+      for (const u of users) {
+        await insertUser(u);
+      }
+    }
+
+    const tursoCatalogs = await getAllCatalogsFromTurso();
+    if (tursoCatalogs.length > 0) {
+      catalogs.length = 0;
+      for (const c of tursoCatalogs) {
+        catalogs.push(c as CatalogItem);
+      }
+    } else {
+      // Seed Turso if empty but local has catalogs
+      for (const c of catalogs) {
+        await saveCatalogToTurso(c);
+      }
+    }
+
+    const tursoRooms = await getAllTransactionRoomsFromTurso();
+    if (tursoRooms.length > 0) {
+      transactionRooms = tursoRooms as TransactionRoom[];
+    } else {
+      // Seed Turso if empty but local has rooms
+      for (const r of transactionRooms) {
+        await saveTransactionRoomToTurso(r);
+      }
+    }
+
+    saveDatabase();
+    console.log(
+      `[Turso DB] Sinkronisasi berhasil: ${users.length} pengguna, ${catalogs.length} katalog, ${transactionRooms.length} room transaksi.`
+    );
+  } catch (err) {
+    console.error("[Turso DB] Error saat sinkronisasi:", err);
+  }
+}
+
 // Helper to normalize phone
 function normalizePhone(phone: string): string {
   let cleaned = phone.replace(/[^0-9]/g, "");
@@ -222,23 +351,6 @@ function normalizePhone(phone: string): string {
     cleaned = "62" + cleaned;
   }
   return cleaned;
-}
-
-// Auto-cleanup items 1 week after marked as sold (terjual)
-function cleanupExpiredSoldCatalogs() {
-  const now = Date.now();
-  let changed = false;
-  for (let i = catalogs.length - 1; i >= 0; i--) {
-    const item = catalogs[i];
-    if (item.status === "terjual" && item.autoDeleteAt && now >= item.autoDeleteAt) {
-      console.log(`[CLEANUP] Otomatis menghapus katalog terjual setelah 1 minggu: ${item.gemType} (${item.id})`);
-      catalogs.splice(i, 1);
-      changed = true;
-    }
-  }
-  if (changed) {
-    saveDatabase();
-  }
 }
 
 // Helper untuk menjaga privasi penawaran:
@@ -304,34 +416,19 @@ async function startServer() {
 
   app.use(express.json({ limit: "10mb" }));
 
-  // Initialize Turso tables and seed database
+  // Initialize Turso tables, sync data, and run auto cleanup
   try {
     await initTursoSchema();
-    for (const u of users) {
-      try {
-        const existing = await getUserById(u.id);
-        if (!existing) {
-          await insertUser({
-            id: u.id,
-            username: u.username,
-            phone: u.phone,
-            password: u.password,
-            role: u.role,
-            avatar: u.avatar,
-            bio: u.bio,
-            joinDate: u.joinDate,
-          });
-        }
-      } catch (seedErr) {
-        // user already exists in Turso
-      }
-    }
+    await syncFromTurso();
+    await runAutoCleanup();
   } catch (tursoInitErr) {
     console.error("[Turso Init Warning]", tursoInitErr);
   }
 
-  // Run cleanup every 10 minutes
-  setInterval(cleanupExpiredSoldCatalogs, 10 * 60 * 1000);
+  // Run cleanup every 5 minutes (menghapus katalog terjual > 1 minggu & room cekout tidak aktif > 1 minggu)
+  setInterval(() => {
+    runAutoCleanup().catch((e) => console.warn("[Auto Cleanup Warning]", e));
+  }, 5 * 60 * 1000);
 
   // Health
   app.get("/api/health", (req, res) => {
@@ -745,7 +842,20 @@ async function startServer() {
     const oldUsername = user.username;
     if (newUsername && newUsername.trim()) user.username = newUsername.trim();
     if (newPhone && newPhone.trim()) user.phone = newPhone.trim();
-    if (avatar) user.avatar = avatar;
+    if (avatar) {
+      let finalAvatar = avatar;
+      if (typeof avatar === "string" && avatar.startsWith("data:")) {
+        try {
+          const upRes = await uploadMediaPhoto(avatar, "avatar");
+          if (upRes && upRes.url) {
+            finalAvatar = upRes.url;
+          }
+        } catch (upErr) {
+          console.warn("[Cloudinary] Upload profile avatar warning:", upErr);
+        }
+      }
+      user.avatar = finalAvatar;
+    }
     if (bio !== undefined) user.bio = bio;
 
     // Update in Turso Database
@@ -875,6 +985,12 @@ async function startServer() {
       currentUser.following.push(targetUser.id);
     }
     saveDatabase();
+    updateUserFollow(targetUser.id, targetUser.followers, targetUser.following).catch((e) =>
+      console.warn(`[Turso DB] Failed updating follow for ${targetUser.id}:`, e)
+    );
+    updateUserFollow(currentUser.id, currentUser.followers, currentUser.following).catch((e) =>
+      console.warn(`[Turso DB] Failed updating follow for ${currentUser.id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -922,7 +1038,7 @@ async function startServer() {
   // 12. Create New Catalog (Input Katalog di Profile)
   // "setiap katalog berisi gambar dan deskripsi yang berisi (jenis batu, dimensi, dan nominal harga)dan untuk membuat katalog ada tombol input katalog, jika sudah menekan tombol save maka masuk ke halaman profile user"
   // "user selain mengisi foto dan keterangan, wajib mengisi URL video baik dari youtube, tiktok ataupun Instagram yang dapat diputar langsung diaplikasi agar calon pembeli melihat secara detail batu yang ingin dibeli."
-  app.post("/api/catalog", (req, res) => {
+  app.post("/api/catalog", async (req, res) => {
     const { userId, gemType, dimensions, price, description, images, videoUrl } = req.body;
 
     if (!userId || !gemType || !dimensions || !price) {
@@ -965,9 +1081,27 @@ async function startServer() {
       "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=800&q=80",
       "https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80",
     ];
+
+    const processedImages: string[] = [];
+    if (images && Array.isArray(images) && images.length > 0) {
+      for (const img of images) {
+        if (typeof img === "string" && img.startsWith("data:")) {
+          try {
+            const upRes = await uploadMediaPhoto(img, "katalog");
+            processedImages.push(upRes.url);
+          } catch (uploadErr) {
+            console.warn("[Cloudinary] Upload catalog photo error:", uploadErr);
+            processedImages.push(img);
+          }
+        } else if (typeof img === "string" && img.trim()) {
+          processedImages.push(img.trim());
+        }
+      }
+    }
+
     const finalImages =
-      images && images.length > 0
-        ? images
+      processedImages.length > 0
+        ? processedImages
         : [sampleGems[Math.floor(Math.random() * sampleGems.length)]];
 
     const newCatalog: CatalogItem = {
@@ -990,6 +1124,9 @@ async function startServer() {
 
     catalogs.unshift(newCatalog);
     saveDatabase();
+    saveCatalogToTurso(newCatalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving new catalog ${newCatalog.id}:`, e)
+    );
 
     console.log(`[CATALOG] New item saved to profile for ${user.username}: ${newCatalog.gemType}`);
 
@@ -1023,6 +1160,9 @@ async function startServer() {
 
     console.log(`[CATALOG] Item published for SALE to Beranda: ${catalog.gemType}`);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving catalog ${catalog.id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -1056,6 +1196,9 @@ async function startServer() {
 
     console.log(`[CATALOG] Item BUMPED to top of Beranda: ${catalog.gemType}`);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving bumped catalog ${catalog.id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -1088,6 +1231,9 @@ async function startServer() {
 
     console.log(`[CATALOG] Item marked SOLD: ${catalog.gemType}, scheduled deletion in 1 week.`);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving sold catalog ${catalog.id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -1123,6 +1269,9 @@ async function startServer() {
 
     catalog.comments.push(newComment);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving commented catalog ${catalog.id}:`, e)
+    );
 
     return res.status(201).json({
       success: true,
@@ -1150,6 +1299,9 @@ async function startServer() {
       catalog.likes.push(userId);
     }
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving liked catalog ${catalog.id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -1236,6 +1388,9 @@ async function startServer() {
 
     catalog.comments.push(offerComment);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving offer catalog ${catalog.id}:`, e)
+    );
 
     console.log(`[NEGO PRIVAT] ${buyerName} menawar ${catalog.gemType}: ${offerPrice}`);
 
@@ -1311,6 +1466,9 @@ async function startServer() {
 
     catalog.comments.push(feedbackComment);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving accepted offer catalog ${catalog.id}:`, e)
+    );
 
     const sanitizedCatalog = sanitizeCatalogForViewer(catalog, sellerId);
 
@@ -1395,6 +1553,9 @@ async function startServer() {
 
     catalog.comments.push(counterComment);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving counter offer catalog ${catalog.id}:`, e)
+    );
 
     console.log(
       `[HARGA BANDING] Penjual ${sellerName} mengajukan harga banding ${trimmedCounterPrice} ke ${offer.buyerName} (Tawaran awal: ${offer.offerPrice})`
@@ -1460,6 +1621,9 @@ async function startServer() {
 
     catalog.comments.push(acceptComment);
     saveDatabase();
+    saveCatalogToTurso(catalog).catch((e) =>
+      console.warn(`[Turso DB] Failed saving buyer-accept catalog ${catalog.id}:`, e)
+    );
 
     const sanitizedCatalog = sanitizeCatalogForViewer(catalog, buyerId);
 
@@ -1554,6 +1718,9 @@ async function startServer() {
 
     catalogs.splice(catalogIndex, 1);
     saveDatabase();
+    deleteCatalogFromTurso(id).catch((e) =>
+      console.warn(`[Turso DB] Failed deleting catalog ${id}:`, e)
+    );
 
     return res.json({
       success: true,
@@ -1682,6 +1849,9 @@ async function startServer() {
 
     transactionRooms.unshift(newRoom);
     saveDatabase();
+    saveTransactionRoomToTurso(newRoom).catch((e) =>
+      console.warn(`[Turso DB] Failed saving room ${newRoom.id}:`, e)
+    );
 
     console.log(
       `[ROOM CEKOUT] Room transaksi baru ${newRoom.id} dibuat untuk ${newRoom.gemType} (Penjual: ${newRoom.seller.username}, Pembeli: ${newRoom.buyer.username}, Harga: ${agreedPrice})`
@@ -1722,7 +1892,7 @@ async function startServer() {
   });
 
   // 4. Verifikasi Wajah (Face ID) & GPS Akurat oleh Penjual / Pembeli
-  app.post("/api/rooms/:roomId/verify", (req, res) => {
+  app.post("/api/rooms/:roomId/verify", async (req, res) => {
     cleanupExpiredRooms();
     const { roomId } = req.params;
     const { userId, facePhotoUrl, latitude, longitude, accuracyMeters, locationName } = req.body;
@@ -1766,9 +1936,21 @@ async function startServer() {
     const targetParty = isSeller ? room.seller : room.buyer;
     const now = Date.now();
 
+    let finalFacePhotoUrl = String(facePhotoUrl).trim();
+    if (finalFacePhotoUrl.startsWith("data:")) {
+      try {
+        const upRes = await uploadMediaPhoto(finalFacePhotoUrl, "face_id");
+        if (upRes && upRes.url) {
+          finalFacePhotoUrl = upRes.url;
+        }
+      } catch (uploadErr) {
+        console.warn("[Cloudinary] Upload face id photo warning:", uploadErr);
+      }
+    }
+
     targetParty.faceId = {
       verified: true,
-      facePhotoUrl: String(facePhotoUrl).trim(),
+      facePhotoUrl: finalFacePhotoUrl,
       verifiedAt: now,
     };
 
@@ -1802,6 +1984,9 @@ async function startServer() {
     room.lastActivityAt = now;
     room.expiresAt = now + SEVEN_DAYS_MS;
     saveDatabase();
+    saveTransactionRoomToTurso(room).catch((e) =>
+      console.warn(`[Turso DB] Failed saving verified room ${room.id}:`, e)
+    );
 
     console.log(
       `[VERIFIKASI BERHASIL] Pengguna ${targetParty.username} (${isSeller ? "Penjual" : "Pembeli"}) berhasil verifikasi Face ID & GPS di room ${room.id}. Keduanya aktif? ${isBothVerified}`
@@ -1876,6 +2061,9 @@ async function startServer() {
     room.expiresAt = now + SEVEN_DAYS_MS;
 
     saveDatabase();
+    saveTransactionRoomToTurso(room).catch((e) =>
+      console.warn(`[Turso DB] Failed saving room chat ${room.id}:`, e)
+    );
 
     return res.json({
       success: true,
