@@ -221,13 +221,6 @@ export const LoginView: React.FC<Props> = ({
           Daftar Akun Baru
         </button>
       </div>
-
-      {/* Footer Info */}
-      <div className="text-center mt-6">
-        <p className="text-xs text-slate-500">
-          Data tersimpan aman di server backend • Bebas biaya registrasi
-        </p>
-      </div>
     </div>
   );
 };

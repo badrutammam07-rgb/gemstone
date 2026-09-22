@@ -28,7 +28,7 @@ import {
   parseRupiahNumber,
   rupiahToTerbilang,
 } from "../utils/currencyUtils";
-import { parseVideoUrl, SAMPLE_GEM_VIDEOS } from "../utils/videoUtils";
+import { parseVideoUrl } from "../utils/videoUtils";
 import { CatalogVideoPlayer } from "./CatalogVideoPlayer";
 
 interface Props {
@@ -192,10 +192,10 @@ export const InputCatalogModal: React.FC<Props> = ({
   return (
     <div
       id="modal-input-catalog"
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm overflow-y-auto p-3 sm:p-6 flex justify-center items-start"
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl my-8 animate-fade-in">
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl my-4 sm:my-8 animate-fade-in relative">
+        <div className="sticky top-0 z-20 bg-slate-900/95 backdrop-blur-md p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-2 bg-emerald-500/20 rounded-xl text-emerald-400">
               <Gem className="w-5 h-5" />
@@ -209,7 +209,7 @@ export const InputCatalogModal: React.FC<Props> = ({
             id="btn-close-input-catalog"
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg"
+            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -390,7 +390,7 @@ export const InputCatalogModal: React.FC<Props> = ({
                   <div className="flex items-center justify-between gap-2 p-2 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs">
                     <span className="text-emerald-300 flex items-center gap-1.5 font-semibold text-[11px]">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      Link {parsed.platformName} terverifikasi & siap diputar langsung
+                      Link video terverifikasi & siap diputar langsung
                     </span>
                     <button
                       type="button"
@@ -421,31 +421,6 @@ export const InputCatalogModal: React.FC<Props> = ({
                 />
               </div>
             )}
-
-            {/* Pilihan Contoh Cepat Video untuk Kemudahan */}
-            <div className="pt-1">
-              <span className="text-[10px] text-slate-400 block mb-1 font-medium">
-                Pilihan contoh tautan video untuk uji coba cepat:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {SAMPLE_GEM_VIDEOS.map((sample) => (
-                  <button
-                    key={sample.label}
-                    type="button"
-                    onClick={() => {
-                      setVideoUrl(sample.url);
-                      setShowVideoPreview(true);
-                    }}
-                    className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg border border-slate-700/80 transition-colors flex items-center gap-1 cursor-pointer"
-                  >
-                    {sample.platform === "youtube" && <Youtube className="w-3 h-3 text-red-400" />}
-                    {sample.platform === "tiktok" && <Film className="w-3 h-3 text-cyan-400" />}
-                    {sample.platform === "instagram" && <Instagram className="w-3 h-3 text-pink-400" />}
-                    <span>{sample.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* Foto Permata dengan Unggah Media & Kompresi Otomatis Max 100KB */}

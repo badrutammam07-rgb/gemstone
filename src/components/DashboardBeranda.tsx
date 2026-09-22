@@ -361,9 +361,6 @@ export const DashboardBeranda: React.FC<Props> = ({
                         >
                           <Play className="w-3 h-3 fill-current text-rose-400" />
                           <span>Video Detail</span>
-                          <span className="text-[10px] opacity-75 hidden sm:inline">
-                            ({parsed.platformName})
-                          </span>
                         </button>
                       );
                     })() : null}
