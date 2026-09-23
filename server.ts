@@ -26,8 +26,8 @@ import {
   getNotificationsFromTurso,
   markNotificationReadInTurso,
   markAllNotificationsReadInTurso,
-} from "./server/turso";
-import { uploadMediaPhoto } from "./server/cloudinary";
+} from "./server/turso.ts";
+import { uploadMediaPhoto } from "./server/cloudinary.ts";
 
 export type NotificationType =
   | "offer"
@@ -2386,8 +2386,13 @@ async function startServer() {
     return res.json({ success: true });
   });
 
-  // Vite Middleware
-  if (process.env.NODE_ENV !== "production") {
+  // Vite Middleware in development, static files in production
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    (!process.env.npm_lifecycle_event?.includes("dev") &&
+      fs.existsSync(path.join(process.cwd(), "dist", "index.html")));
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -2396,7 +2401,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

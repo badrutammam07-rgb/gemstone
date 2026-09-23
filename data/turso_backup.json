@@ -1,0 +1,87 @@
+{
+  "users": [
+    {
+      "id": "user-1790001694664",
+      "username": "omdru gems",
+      "phone": "0816988848",
+      "password": "123456",
+      "role": "Anggota Komunitas Batu Mulia",
+      "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "bio": "Pecinta batu mulia baru bergabung di Komunitas.",
+      "followers": "[]",
+      "following": "[]",
+      "join_date": "Baru saja",
+      "created_at": "2026-09-21 14:41:34"
+    },
+    {
+      "id": "user-1790075761449",
+      "username": "coba doang",
+      "phone": "0816988847",
+      "password": "123456",
+      "role": "Anggota Komunitas Batu Mulia",
+      "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "bio": "Pecinta batu mulia baru bergabung di Komunitas.",
+      "followers": "[]",
+      "following": "[]",
+      "join_date": "Baru saja",
+      "created_at": "2026-09-22 11:16:01"
+    },
+    {
+      "id": "user-1790075900652",
+      "username": "uji coba",
+      "phone": "0816988849",
+      "password": "123456",
+      "role": "Anggota Komunitas Batu Mulia",
+      "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "bio": "Pecinta batu mulia baru bergabung di Komunitas.",
+      "followers": "[]",
+      "following": "[]",
+      "join_date": "Baru saja",
+      "created_at": "2026-09-22 11:18:20"
+    }
+  ],
+  "catalogs_v2": [
+    {
+      "id": "cat-1790073612633",
+      "user_id": "user-1790001694664",
+      "username": "omdru gems",
+      "user_avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "gem_type": "Batu koral",
+      "dimensions": "Rhghyg",
+      "price": "Rp 462.727",
+      "description": "Sbsmshdnsn",
+      "video_url": "https://www.instagram.com/p/Ddik5HEA3wn/?stkn=ZHlmczZ4bWVnNzJr",
+      "images": "[\"https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80\"]",
+      "status": "dijual",
+      "is_published": 1,
+      "published_at": 1790074117604,
+      "bumped_at": 1790074117604,
+      "sold_at": null,
+      "auto_delete_at": null,
+      "comments": "[{\"id\":\"comm-offer-1790075805155\",\"authorId\":\"user-1790075761449\",\"authorName\":\"coba doang\",\"authorAvatar\":\"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80\",\"content\":\"Telah melakukan penawaran harga.\",\"createdAt\":\"Baru saja\",\"isOffer\":true,\"offerId\":\"off-1790075805155\",\"offerPrice\":\"Rp 150.000\",\"offerStatus\":\"countered\",\"counterPrice\":\"Rp 200.000\",\"counterNote\":\"\"},{\"id\":\"comm-counter-1790075840032\",\"authorId\":\"user-1790001694664\",\"authorName\":\"omdru gems\",\"authorAvatar\":\"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80\",\"content\":\"Penjual mengajukan harga banding kepada @coba doang.\",\"createdAt\":\"Baru saja\",\"isOffer\":true,\"offerId\":\"off-1790075805155\",\"offerPrice\":\"Rp 150.000\",\"counterPrice\":\"Rp 200.000\",\"counterNote\":\"\",\"offerStatus\":\"countered\"},{\"id\":\"comm-1790075934931\",\"authorId\":\"user-1790075900652\",\"authorName\":\"uji coba\",\"authorAvatar\":\"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80\",\"content\":\"Lokasi dimana\",\"createdAt\":\"Baru saja\"},{\"id\":\"comm-offer-1790076607509\",\"authorId\":\"user-1790075761449\",\"authorName\":\"coba doang\",\"authorAvatar\":\"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80\",\"content\":\"Telah melakukan penawaran harga.\",\"createdAt\":\"Baru saja\",\"isOffer\":true,\"offerId\":\"off-1790075805155\",\"offerPrice\":\"Rp 180.000\",\"offerStatus\":\"pending\"}]",
+      "likes": "[]",
+      "offers": "[{\"id\":\"off-1790075805155\",\"catalogId\":\"cat-1790073612633\",\"buyerId\":\"user-1790075761449\",\"buyerName\":\"coba doang\",\"buyerAvatar\":\"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80\",\"buyerPhone\":\"0816988847\",\"sellerId\":\"user-1790001694664\",\"offerPrice\":\"Rp 180.000\",\"note\":\"\",\"status\":\"pending\",\"createdAt\":\"Baru saja\",\"updatedAt\":1790076607509}]",
+      "created_at": "Hari ini"
+    }
+  ],
+  "transaction_rooms": [],
+  "notifications": [
+    {
+      "id": "notif-1790076607510-go5t5",
+      "recipient_id": "user-1790001694664",
+      "actor_id": "user-1790075761449",
+      "actor_name": "coba doang",
+      "actor_avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      "type": "offer",
+      "title": "Penawaran Harga Baru",
+      "message": "coba doang mengajukan penawaran harga sebesar Rp 180.000 untuk batu \"Batu koral\".",
+      "catalog_id": "cat-1790073612633",
+      "gem_type": "Batu koral",
+      "catalog_image": "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80",
+      "comment_id": null,
+      "offer_id": "off-1790075805155",
+      "is_read": 1,
+      "created_at": 1790076607510
+    }
+  ]
+}

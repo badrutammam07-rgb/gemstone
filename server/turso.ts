@@ -1,4 +1,4 @@
-import { createClient, Client } from "@libsql/client";
+import { createClient, type Client } from "@libsql/client";
 import path from "path";
 import fs from "fs";
 
@@ -21,8 +21,12 @@ function createLocalClient(): Client {
 export function getTursoClient(): Client {
   if (dbClient) return dbClient;
 
-  const url = process.env.TURSO_DATABASE_URL?.trim();
-  const authToken = process.env.TURSO_AUTH_TOKEN?.trim();
+  // Prefer environment variables, or fallback to the newly configured Turso database
+  const DEFAULT_TURSO_URL = "libsql://batumulia-badrutammam07-rgb.aws-ap-northeast-1.turso.io";
+  const DEFAULT_TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTAxNTQ2NTQsImlkIjoiMDFhMGNkODMtZmIwMS03MGVhLThlZWMtNDRjMTg0YTZiM2UzIiwia2lkIjoiazlqa2p6R1hQYjdvM3I1NzF2RndNUlFuVzBmY05UeU5fSzE0QUtqQVRpWSIsInJpZCI6ImNiZWM5MjFmLTMyMTQtNGI4NS1iNTE2LWE0M2ZmZGEwZTBlYSJ9.0pVY1jQXvv9esY2kR22wGcPNBPeFbROGdfF72PBgQ9b-C3cjYoxTbKUa1tu28k8odW6ivUEZcswZwqaIw6VODA";
+
+  const url = (process.env.TURSO_DATABASE_URL?.trim()) || DEFAULT_TURSO_URL;
+  const authToken = (process.env.TURSO_AUTH_TOKEN?.trim()) || DEFAULT_TURSO_TOKEN;
 
   // Validate auth token: A valid Turso token must not be another libsql:// or http URL
   const isValidToken =
