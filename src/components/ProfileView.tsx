@@ -28,6 +28,7 @@ import {
   Video,
   Film,
   Image as ImageIcon,
+  Radio,
 } from "lucide-react";
 import { User, CatalogItem, NegotiationOffer } from "../types";
 import { InputCatalogModal } from "./InputCatalogModal";
@@ -51,6 +52,7 @@ interface Props {
     price?: string;
   }) => void;
   onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
+  onStartLiveWithCatalog?: (catalog: CatalogItem) => void;
 }
 
 export const ProfileView: React.FC<Props> = ({
@@ -61,6 +63,7 @@ export const ProfileView: React.FC<Props> = ({
   onOpenSettings,
   onOpenFullscreen,
   onOpenTransactionRoom,
+  onStartLiveWithCatalog,
 }) => {
   const isOwnProfile = !viewingUserId || viewingUserId === currentUser.id;
   const targetUserId = viewingUserId || currentUser.id;
@@ -744,6 +747,20 @@ export const ProfileView: React.FC<Props> = ({
                       >
                         <ArrowUpCircle className="w-3.5 h-3.5" />
                         <span>Sundul</span>
+                      </button>
+                    )}
+
+                    {/* Tombol Live Streaming Khusus Batu Ini */}
+                    {!isSold && onStartLiveWithCatalog && (
+                      <button
+                        id={`btn-live-${item.id}`}
+                        type="button"
+                        onClick={() => onStartLiveWithCatalog(item)}
+                        className="bg-rose-600/90 hover:bg-rose-500 text-white font-bold text-xs py-2 px-2 rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer border border-rose-400/40"
+                        title="Buka Sesi Live Streaming untuk Menjual Batu Ini Secara Langsung"
+                      >
+                        <Radio className="w-3.5 h-3.5 animate-pulse text-white" />
+                        <span>Live Jual</span>
                       </button>
                     )}
 

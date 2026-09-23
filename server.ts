@@ -1,7 +1,19 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import fs from "fs";
+import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
+import {
+  getActiveStreamsSummary,
+  getStreamSession,
+  createStreamSession,
+  endStreamSession,
+  addCommentToStream,
+  updatePinnedProduct,
+  addViewerToStream,
+  removeViewerFromStream,
+} from "./server/liveStreamManager.ts";
 import {
   initTursoSchema,
   getUserByUsernameOrPhone,
@@ -2386,6 +2398,291 @@ async function startServer() {
     return res.json({ success: true });
   });
 
+  // ==========================================
+  // LIVE STREAMING APIS (100% IN-MEMORY ONLY - NO DB PERSISTENCE)
+  // ==========================================
+  // 1. Get active streams summary
+  app.get("/api/live/streams", (_req, res) => {
+    return res.json({
+      success: true,
+      streams: getActiveStreamsSummary(),
+    });
+  });
+
+  // 2. Get specific live stream details
+  app.get("/api/live/streams/:id", (req, res) => {
+    const stream = getStreamSession(req.params.id);
+    if (!stream) {
+      return res.status(404).json({ success: false, message: "Live stream tidak ditemukan atau sudah diakhiri." });
+    }
+    return res.json({
+      success: true,
+      stream: {
+        id: stream.id,
+        hostId: stream.hostId,
+        hostName: stream.hostName,
+        hostAvatar: stream.hostAvatar,
+        title: stream.title,
+        pinnedProduct: stream.pinnedProduct,
+        startedAt: stream.startedAt,
+        viewerCount: stream.viewers.size,
+        comments: stream.comments,
+      },
+    });
+  });
+
+  // 3. Start a new live stream
+  app.post("/api/live/start", (req, res) => {
+    const { hostId, hostName, hostAvatar, title, pinnedProduct } = req.body;
+    if (!hostId || !hostName) {
+      return res.status(400).json({ success: false, message: "Informasi host live tidak lengkap." });
+    }
+
+    const streamId = `live-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const session = createStreamSession({
+      id: streamId,
+      hostId,
+      hostName,
+      hostAvatar: hostAvatar || "",
+      title: title || "Live Jual Beli Batu Mulia",
+      pinnedProduct: pinnedProduct || null,
+    });
+
+    console.log(`[Live Stream] Dimulai oleh ${hostName} (ID: ${streamId}). Disimpan hanya di memory volatile.`);
+
+    return res.json({
+      success: true,
+      stream: {
+        id: session.id,
+        hostId: session.hostId,
+        hostName: session.hostName,
+        hostAvatar: session.hostAvatar,
+        title: session.title,
+        pinnedProduct: session.pinnedProduct,
+        startedAt: session.startedAt,
+        viewerCount: 0,
+      },
+    });
+  });
+
+  // 4. End live stream (Dibersihkan seketika tanpa tersimpan di database manapun)
+  app.post("/api/live/end", (req, res) => {
+    const { streamId, hostId } = req.body;
+    const session = getStreamSession(streamId);
+    if (!session) {
+      return res.json({ success: true, message: "Stream sudah diakhiri sebelumnya." });
+    }
+
+    if (session.hostId !== hostId) {
+      return res.status(403).json({ success: false, message: "Hanya host yang dapat mengakhiri live stream ini." });
+    }
+
+    // Broadcast stream ended signal via WebSockets before destroying session
+    broadcastToLiveRoom(streamId, {
+      type: "stream_ended",
+      streamId,
+      message: "Live stream telah diakhiri oleh penjual.",
+    });
+
+    endStreamSession(streamId);
+    console.log(`[Live Stream] Diakhiri (ID: ${streamId}). Semua data komentar dan penonton dihapus bersih dari memori.`);
+
+    return res.json({
+      success: true,
+      message: "Live stream telah diakhiri. Tidak ada data yang disimpan di database.",
+    });
+  });
+
+  // 5. Pin / Unpin catalog product in live stream
+  app.post("/api/live/pin-product", (req, res) => {
+    const { streamId, hostId, product } = req.body;
+    const session = getStreamSession(streamId);
+    if (!session) {
+      return res.status(404).json({ success: false, message: "Stream tidak ditemukan." });
+    }
+    if (session.hostId !== hostId) {
+      return res.status(403).json({ success: false, message: "Hanya host yang dapat menyematkan produk." });
+    }
+
+    updatePinnedProduct(streamId, product || null);
+
+    broadcastToLiveRoom(streamId, {
+      type: "product_pinned",
+      streamId,
+      product: product || null,
+    });
+
+    return res.json({ success: true, product });
+  });
+
+  // Create HTTP Server to attach both Express and WebSocket Server
+  const server = http.createServer(app);
+
+  // WebSocket Server setup specifically on path /ws/live
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Map to track active client sockets per live room
+  // streamId -> Set<WebSocket with custom metadata>
+  const roomSockets = new Map<string, Set<WebSocket>>();
+
+  function broadcastToLiveRoom(streamId: string, payload: any, exceptWs?: WebSocket) {
+    const sockets = roomSockets.get(streamId);
+    if (!sockets) return;
+    const dataStr = JSON.stringify(payload);
+    sockets.forEach((ws) => {
+      if (ws !== exceptWs && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(dataStr);
+        } catch (e) {
+          console.warn("[WS Live Send Error]:", e);
+        }
+      }
+    });
+  }
+
+  // Handle HTTP Upgrade to WebSocket
+  server.on("upgrade", (request, socket, head) => {
+    const { pathname } = new URL(request.url || "", `http://${request.headers.host}`);
+    if (pathname === "/ws/live") {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    } else {
+      // Let Vite HMR or other upgrade requests pass through if not /ws/live
+      socket.destroy();
+    }
+  });
+
+  wss.on("connection", (ws: WebSocket) => {
+    let currentStreamId: string | null = null;
+    let currentUser: { id: string; name: string; avatar: string } | null = null;
+
+    ws.on("message", (rawMsg) => {
+      try {
+        const data = JSON.parse(rawMsg.toString());
+
+        switch (data.type) {
+          case "join_stream": {
+            const { streamId, user } = data;
+            const session = getStreamSession(streamId);
+            if (!session) {
+              ws.send(JSON.stringify({ type: "stream_not_found", message: "Live stream tidak aktif." }));
+              return;
+            }
+
+            currentStreamId = streamId;
+            currentUser = user;
+
+            if (!roomSockets.has(streamId)) {
+              roomSockets.set(streamId, new Set());
+            }
+            roomSockets.get(streamId)!.add(ws);
+
+            // Add viewer in memory
+            const viewerCount = addViewerToStream(streamId, user);
+
+            // Send initial stream state to newly joined user
+            ws.send(
+              JSON.stringify({
+                type: "init_state",
+                stream: {
+                  id: session.id,
+                  hostId: session.hostId,
+                  hostName: session.hostName,
+                  hostAvatar: session.hostAvatar,
+                  title: session.title,
+                  pinnedProduct: session.pinnedProduct,
+                  startedAt: session.startedAt,
+                  viewerCount,
+                  comments: session.comments,
+                },
+              })
+            );
+
+            // Broadcast updated viewer count & join notification to other viewers
+            broadcastToLiveRoom(
+              streamId,
+              {
+                type: "viewer_count_update",
+                viewerCount,
+                userJoined: user.name,
+              },
+              ws
+            );
+            break;
+          }
+
+          case "send_comment": {
+            if (!currentStreamId || !currentUser) return;
+            const { message } = data;
+            if (!message || !message.trim()) return;
+
+            const savedComment = addCommentToStream(currentStreamId, {
+              senderId: currentUser.id,
+              senderName: currentUser.name,
+              senderAvatar: currentUser.avatar,
+              message: message.trim(),
+            });
+
+            if (savedComment) {
+              broadcastToLiveRoom(currentStreamId, {
+                type: "new_comment",
+                comment: savedComment,
+              });
+            }
+            break;
+          }
+
+          // WebRTC Video/Audio P2P Signaling for real live video
+          case "signal_offer":
+          case "signal_answer":
+          case "signal_ice": {
+            if (!currentStreamId) return;
+            // Relay WebRTC signal to target recipient in the room
+            broadcastToLiveRoom(
+              currentStreamId,
+              {
+                type: data.type,
+                senderId: currentUser?.id,
+                targetId: data.targetId,
+                payload: data.payload,
+              },
+              ws
+            );
+            break;
+          }
+
+          default:
+            break;
+        }
+      } catch (err) {
+        console.error("[WS Message Error]:", err);
+      }
+    });
+
+    const handleLeave = () => {
+      if (currentStreamId && currentUser) {
+        const sockets = roomSockets.get(currentStreamId);
+        if (sockets) {
+          sockets.delete(ws);
+          if (sockets.size === 0) {
+            roomSockets.delete(currentStreamId);
+          }
+        }
+
+        const newCount = removeViewerFromStream(currentStreamId, currentUser.id);
+        broadcastToLiveRoom(currentStreamId, {
+          type: "viewer_count_update",
+          viewerCount: newCount,
+          userLeft: currentUser.name,
+        });
+      }
+    };
+
+    ws.on("close", handleLeave);
+    ws.on("error", handleLeave);
+  });
+
   // Vite Middleware in development, static files in production
   const isProduction =
     process.env.NODE_ENV === "production" ||
@@ -2406,8 +2703,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server Komunitas Batu Mulia running on http://0.0.0.0:${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server Komunitas Batu Mulia with Live WebSocket running on http://0.0.0.0:${PORT}`);
   });
 }
 

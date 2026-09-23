@@ -12,6 +12,7 @@ import {
   Sparkles,
   ShieldCheck,
   Bell,
+  Radio,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -25,6 +26,8 @@ interface Props {
   onOpenRoomsList?: () => void;
   unreadNotifCount?: number;
   onOpenNotifications?: () => void;
+  onOpenLiveStream?: () => void;
+  activeLiveCount?: number;
 }
 
 export const HeaderNav: React.FC<Props> = ({
@@ -37,6 +40,8 @@ export const HeaderNav: React.FC<Props> = ({
   onOpenRoomsList,
   unreadNotifCount = 0,
   onOpenNotifications,
+  onOpenLiveStream,
+  activeLiveCount = 0,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -255,6 +260,25 @@ export const HeaderNav: React.FC<Props> = ({
               <span className="hidden sm:inline">Profil & Katalog</span>
             </button>
           </div>
+
+          {/* Tombol Live Streaming Interaktif */}
+          {onOpenLiveStream && (
+            <button
+              id="btn-nav-live-stream"
+              type="button"
+              onClick={onOpenLiveStream}
+              className="relative px-2.5 sm:px-3 py-1.5 text-xs font-black bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white rounded-xl shadow-md shadow-rose-900/40 transition-all flex items-center gap-1.5 cursor-pointer border border-rose-400/40 active:scale-95"
+              title="Live Streaming Jual Beli Batu Mulia (Zero Persistence DB)"
+            >
+              <Radio className="w-3.5 h-3.5 animate-pulse text-white" />
+              <span className="hidden sm:inline uppercase tracking-wide">Live</span>
+              {activeLiveCount > 0 && (
+                <span className="ml-1 bg-white text-rose-700 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {activeLiveCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Lonceng Notifikasi Akun */}
           <button

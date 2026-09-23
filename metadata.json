@@ -1,6 +1,6 @@
 {
   "name": "Komunitas Batu Mulia",
   "description": "Aplikasi komunitas pecinta batu mulia Nusantara dengan otentikasi akun, database Turso, dan forum koleksi permata.",
-  "requestFramePermissions": ["camera", "geolocation"],
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

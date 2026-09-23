@@ -10,7 +10,8 @@ import { ImageViewerModal } from "./components/ImageViewerModal";
 import { TransactionRoomModal } from "./components/TransactionRoomModal";
 import { MyRoomsListModal } from "./components/MyRoomsListModal";
 import { NotificationModal } from "./components/NotificationModal";
-import { User, AppNotification } from "./types";
+import { LiveStreamingModal } from "./components/LiveStreamingModal";
+import { User, AppNotification, CatalogItem } from "./types";
 import { CheckCircle2 } from "lucide-react";
 
 export default function App() {
@@ -43,6 +44,16 @@ export default function App() {
     commentId?: string;
     type?: string;
   } | null>(null);
+
+  // Live streaming states (RAM Volatile only - Zero DB persistence)
+  const [liveStreamSessionState, setLiveStreamSessionState] = useState<{
+    isOpen: boolean;
+    streamId?: string;
+    isHostMode?: boolean;
+    pinnedCatalog?: CatalogItem | null;
+  } | null>(null);
+  const [activeLiveCount, setActiveLiveCount] = useState<number>(0);
+  const [userCatalogs, setUserCatalogs] = useState<CatalogItem[]>([]);
 
   // Lightbox / Fullscreen Image viewer state for gemstone catalogs (avatars are excluded)
   const [fullscreenImage, setFullscreenImage] = useState<{
@@ -158,10 +169,45 @@ export default function App() {
     }
   };
 
+  // Ambil jumlah active live streams & catalog milik currentUser
+  const fetchLiveStatus = async () => {
+    try {
+      const res = await fetch("/api/live/streams");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setActiveLiveCount((data.streams || []).length);
+        }
+      }
+    } catch (e) {
+      console.warn("Gagal mengambil active live:", e);
+    }
+  };
+
+  const fetchCurrentUserCatalogs = async () => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`/api/user/${currentUser.id}/catalogs`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setUserCatalogs(data.catalogs || []);
+        }
+      }
+    } catch (e) {
+      console.warn("Gagal mengambil katalog user:", e);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 10000); // Polling setiap 10 detik
+    fetchLiveStatus();
+    fetchCurrentUserCatalogs();
+    const interval = setInterval(() => {
+      fetchNotifications();
+      fetchLiveStatus();
+    }, 8000);
     return () => clearInterval(interval);
   }, [currentUser?.id]);
 
@@ -226,6 +272,13 @@ export default function App() {
             fetchNotifications();
             setIsNotifModalOpen(true);
           }}
+          onOpenLiveStream={() => {
+            setLiveStreamSessionState({
+              isOpen: true,
+              isHostMode: true,
+            });
+          }}
+          activeLiveCount={activeLiveCount}
         />
 
         {/* System Notice Toast */}
@@ -255,6 +308,19 @@ export default function App() {
               onOpenTransactionRoom={(params) => setActiveRoomParams(params)}
               highlightTarget={highlightTarget}
               onClearHighlightTarget={() => setHighlightTarget(null)}
+              onOpenLiveStream={(streamId) => {
+                setLiveStreamSessionState({
+                  isOpen: true,
+                  streamId,
+                  isHostMode: false,
+                });
+              }}
+              onStartLiveHost={() => {
+                setLiveStreamSessionState({
+                  isOpen: true,
+                  isHostMode: true,
+                });
+              }}
             />
           ) : (
             <ProfileView
@@ -264,6 +330,13 @@ export default function App() {
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenFullscreen={(data) => setFullscreenImage(data)}
               onOpenTransactionRoom={(params) => setActiveRoomParams(params)}
+              onStartLiveWithCatalog={(catalog) => {
+                setLiveStreamSessionState({
+                  isOpen: true,
+                  isHostMode: true,
+                  pinnedCatalog: catalog,
+                });
+              }}
               onRefreshCurrentUser={(updated) => {
                 setCurrentUser(updated);
                 try {
@@ -336,6 +409,26 @@ export default function App() {
           onMarkAllAsRead={handleMarkAllNotifsRead}
           onNavigateToTarget={handleNavigateToTarget}
         />
+
+        {/* Modal Live Streaming (100% In-Memory - Zero Persistence Database) */}
+        {liveStreamSessionState?.isOpen && (
+          <LiveStreamingModal
+            currentUser={currentUser}
+            streamId={liveStreamSessionState.streamId}
+            isHostMode={liveStreamSessionState.isHostMode}
+            initialPinnedCatalog={liveStreamSessionState.pinnedCatalog}
+            userCatalogs={userCatalogs}
+            onClose={() => {
+              setLiveStreamSessionState(null);
+              fetchLiveStatus();
+            }}
+            onSelectProduct={(catalogId) => {
+              setLiveStreamSessionState(null);
+              setMainView("beranda");
+              setHighlightTarget({ catalogId, type: "offer" });
+            }}
+          />
+        )}
       </div>
     );
   }

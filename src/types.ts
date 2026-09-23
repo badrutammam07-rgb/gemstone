@@ -149,3 +149,32 @@ export interface AppNotification {
   createdAt: number;
 }
 
+export interface LiveStreamComment {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface LivePinnedProduct {
+  id?: string;
+  title: string;
+  price: string;
+  dimensions?: string;
+  photoUrl?: string;
+  description?: string;
+}
+
+export interface LiveStreamSummary {
+  id: string;
+  hostId: string;
+  hostName: string;
+  hostAvatar: string;
+  title: string;
+  pinnedProduct?: LivePinnedProduct | null;
+  startedAt: number;
+  viewerCount: number;
+}
+

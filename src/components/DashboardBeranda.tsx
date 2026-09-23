@@ -26,8 +26,10 @@ import {
   CornerDownRight,
   X,
   BadgeCheck,
+  Radio,
+  Eye,
 } from "lucide-react";
-import { User, CatalogItem, NegotiationOffer } from "../types";
+import { User, CatalogItem, NegotiationOffer, LiveStreamSummary } from "../types";
 import { formatToRupiah } from "../utils/currencyUtils";
 import { parseVideoUrl } from "../utils/videoUtils";
 import { CatalogVideoPlayer } from "./CatalogVideoPlayer";
@@ -48,6 +50,8 @@ interface Props {
   onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
   highlightTarget?: { catalogId: string; offerId?: string; commentId?: string; type?: string } | null;
   onClearHighlightTarget?: () => void;
+  onOpenLiveStream?: (streamId?: string) => void;
+  onStartLiveHost?: () => void;
 }
 
 export const DashboardBeranda: React.FC<Props> = ({
@@ -58,10 +62,13 @@ export const DashboardBeranda: React.FC<Props> = ({
   onOpenTransactionRoom,
   highlightTarget,
   onClearHighlightTarget,
+  onOpenLiveStream,
+  onStartLiveHost,
 }) => {
   const [catalogs, setCatalogs] = useState<CatalogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [activeStreams, setActiveStreams] = useState<LiveStreamSummary[]>([]);
   const [replyingTo, setReplyingTo] = useState<
     Record<string, { commentId: string; authorId: string; authorName: string } | null>
   >({});
@@ -131,7 +138,24 @@ export const DashboardBeranda: React.FC<Props> = ({
 
   useEffect(() => {
     fetchFeed();
+    fetchLiveStreams();
+    const liveInterval = setInterval(fetchLiveStreams, 8000);
+    return () => clearInterval(liveInterval);
   }, [currentUser.id]);
+
+  const fetchLiveStreams = async () => {
+    try {
+      const res = await fetch("/api/live/streams");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setActiveStreams(data.streams || []);
+        }
+      }
+    } catch (e) {
+      console.warn("Gagal mengambil data live streams:", e);
+    }
+  };
 
   const fetchFeed = async () => {
     setIsLoading(true);
@@ -284,7 +308,7 @@ export const DashboardBeranda: React.FC<Props> = ({
       )}
 
       {/* Dashboard Beranda Subtitle & Info */}
-      <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
             <span>Dashboard Beranda Komunitas</span>
@@ -294,15 +318,112 @@ export const DashboardBeranda: React.FC<Props> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={fetchFeed}
-          className="text-slate-400 hover:text-emerald-400 p-2 rounded-xl bg-slate-900 border border-slate-800 transition-colors"
-          title="Segarkan Beranda"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          {onStartLiveHost && (
+            <button
+              type="button"
+              onClick={onStartLiveHost}
+              className="bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-rose-900/40 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 border border-rose-400/40"
+              title="Mulai Sesi Live Streaming Jualan Batu Mulia"
+            >
+              <Radio className="w-3.5 h-3.5 animate-pulse text-white" />
+              <span>Mulai Live Jual</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              fetchFeed();
+              fetchLiveStreams();
+            }}
+            className="text-slate-400 hover:text-emerald-400 p-2 rounded-xl bg-slate-900 border border-slate-800 transition-colors"
+            title="Segarkan Beranda & Live"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
+
+      {/* Active Live Streams Section (Volatile In-Memory Only) */}
+      {activeStreams.length > 0 && (
+        <div className="mb-8 bg-gradient-to-r from-rose-950/40 via-slate-900 to-amber-950/30 border border-rose-500/30 rounded-3xl p-4 sm:p-5 shadow-2xl">
+          <div className="flex items-center justify-between mb-3.5">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+              </span>
+              <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                <span>Siaran Live Berlangsung</span>
+                <span className="bg-rose-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                  {activeStreams.length} Sedang Live
+                </span>
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-400 hidden sm:block">
+              Tonton langsung, beri komentar & lihat jumlah penonton aktif
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {activeStreams.map((stream) => (
+              <div
+                key={stream.id}
+                onClick={() => onOpenLiveStream && onOpenLiveStream(stream.id)}
+                className="group relative bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-rose-500/50 rounded-2xl p-3 cursor-pointer transition-all duration-200 shadow-md hover:shadow-rose-950/40"
+              >
+                <div className="flex items-center gap-3 mb-2.5">
+                  <div className="relative">
+                    <img
+                      src={stream.hostAvatar}
+                      alt={stream.hostName}
+                      className="w-10 h-10 rounded-full object-cover border-2 border-rose-500"
+                    />
+                    <span className="absolute -bottom-1 -right-1 bg-rose-600 text-white text-[8px] font-black uppercase px-1 rounded-full">
+                      Live
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-white truncate group-hover:text-rose-300 transition-colors">
+                      {stream.hostName}
+                    </p>
+                    <p className="text-[11px] text-slate-400 truncate">{stream.title}</p>
+                  </div>
+                </div>
+
+                {stream.pinnedProduct ? (
+                  <div className="flex items-center gap-2 bg-slate-900/90 rounded-xl p-2 border border-slate-800/80 mb-2">
+                    <img
+                      src={stream.pinnedProduct.photoUrl}
+                      alt={stream.pinnedProduct.title}
+                      className="w-8 h-8 rounded-lg object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-semibold text-slate-300 truncate">
+                        {stream.pinnedProduct.title}
+                      </p>
+                      <p className="text-[11px] font-extrabold text-amber-400">
+                        {stream.pinnedProduct.price}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/60">
+                  <div className="flex items-center gap-1 text-slate-400 font-semibold">
+                    <Eye className="w-3.5 h-3.5 text-rose-400" />
+                    <span>{stream.viewerCount} Penonton</span>
+                  </div>
+                  <span className="text-emerald-400 font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+                    Tonton &gt;
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Feed List */}
       {isLoading ? (
