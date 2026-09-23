@@ -75,8 +75,8 @@ auto-save-list
 
 .env
 .env.*
-!.env.example
-!.env.template
+.env.example
+.env.template
 *.pem
 *.key
 *.p12
