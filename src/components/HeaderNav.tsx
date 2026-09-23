@@ -11,6 +11,7 @@ import {
   X,
   Sparkles,
   ShieldCheck,
+  Bell,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -22,6 +23,8 @@ interface Props {
   onLogout: () => void;
   onSelectOtherUser: (userId: string) => void;
   onOpenRoomsList?: () => void;
+  unreadNotifCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 export const HeaderNav: React.FC<Props> = ({
@@ -32,6 +35,8 @@ export const HeaderNav: React.FC<Props> = ({
   onLogout,
   onSelectOtherUser,
   onOpenRoomsList,
+  unreadNotifCount = 0,
+  onOpenNotifications,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -250,6 +255,22 @@ export const HeaderNav: React.FC<Props> = ({
               <span className="hidden sm:inline">Profil & Katalog</span>
             </button>
           </div>
+
+          {/* Lonceng Notifikasi Akun */}
+          <button
+            id="btn-nav-notifications"
+            type="button"
+            onClick={onOpenNotifications}
+            className="relative p-2 text-slate-300 hover:text-emerald-400 bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700/80 hover:border-emerald-500/40 rounded-xl transition-all cursor-pointer shadow-sm"
+            title="Notifikasi Penawaran & Komentar Akun Anda"
+          >
+            <Bell className="w-4 h-4" />
+            {unreadNotifCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white font-black text-[10px] rounded-full flex items-center justify-center animate-pulse shadow-md border-2 border-slate-900">
+                {unreadNotifCount > 99 ? "99+" : unreadNotifCount}
+              </span>
+            )}
+          </button>
 
           {/* Tombol Akses Cepat Room Transaksi */}
           {onOpenRoomsList && (

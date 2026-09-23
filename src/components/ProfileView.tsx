@@ -590,11 +590,10 @@ export const ProfileView: React.FC<Props> = ({
                   )}
 
                   {getActiveTab(item.id) === "video" && item.videoUrl ? (
-                    <div className="w-full bg-black p-2">
+                    <div className="w-full bg-black p-2 sm:p-3">
                       <CatalogVideoPlayer
                         videoUrl={item.videoUrl}
                         gemTitle={item.gemType}
-                        compact={true}
                       />
                     </div>
                   ) : (

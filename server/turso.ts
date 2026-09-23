@@ -134,6 +134,26 @@ async function initTablesOnClient(client: Client): Promise<void> {
       messages TEXT NOT NULL DEFAULT '[]'
     );
   `);
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      recipient_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      actor_avatar TEXT,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      catalog_id TEXT NOT NULL,
+      gem_type TEXT NOT NULL,
+      catalog_image TEXT,
+      comment_id TEXT,
+      offer_id TEXT,
+      is_read INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+  `);
 }
 
 export async function initTursoSchema(): Promise<void> {
@@ -643,5 +663,131 @@ export async function deleteTransactionRoomsByCatalogId(catalogId: string): Prom
   } catch (err) {
     console.error("[Turso DB] deleteTransactionRoomsByCatalogId error:", err);
     return 0;
+  }
+}
+
+// ----------------------------------------------------
+// NOTIFICATIONS PERSISTENCE
+// ----------------------------------------------------
+export interface TursoNotification {
+  id: string;
+  recipient_id: string;
+  actor_id: string;
+  actor_name: string;
+  actor_avatar?: string;
+  type: string;
+  title: string;
+  message: string;
+  catalog_id: string;
+  gem_type: string;
+  catalog_image?: string;
+  comment_id?: string;
+  offer_id?: string;
+  is_read: number;
+  created_at: number;
+}
+
+export async function saveNotificationToTurso(n: {
+  id: string;
+  recipientId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar?: string;
+  type: string;
+  title: string;
+  message: string;
+  catalogId: string;
+  gemType: string;
+  catalogImage?: string;
+  commentId?: string;
+  offerId?: string;
+  isRead: boolean;
+  createdAt: number;
+}): Promise<boolean> {
+  try {
+    await safeExecute({
+      sql: `INSERT OR REPLACE INTO notifications (
+        id, recipient_id, actor_id, actor_name, actor_avatar,
+        type, title, message, catalog_id, gem_type, catalog_image,
+        comment_id, offer_id, is_read, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        n.id,
+        n.recipientId,
+        n.actorId,
+        n.actorName,
+        n.actorAvatar || null,
+        n.type,
+        n.title,
+        n.message,
+        n.catalogId,
+        n.gemType,
+        n.catalogImage || null,
+        n.commentId || null,
+        n.offerId || null,
+        n.isRead ? 1 : 0,
+        n.createdAt,
+      ],
+    });
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] saveNotificationToTurso error:", err);
+    return false;
+  }
+}
+
+export async function getNotificationsFromTurso(recipientId: string): Promise<any[]> {
+  try {
+    const rs = await safeExecute({
+      sql: "SELECT * FROM notifications WHERE recipient_id = ? ORDER BY created_at DESC LIMIT 50",
+      args: [recipientId],
+    });
+    if (!rs || !rs.rows) return [];
+    return rs.rows.map((row: any) => ({
+      id: String(row.id),
+      recipientId: String(row.recipient_id),
+      actorId: String(row.actor_id),
+      actorName: String(row.actor_name),
+      actorAvatar: row.actor_avatar ? String(row.actor_avatar) : "",
+      type: String(row.type),
+      title: String(row.title),
+      message: String(row.message),
+      catalogId: String(row.catalog_id),
+      gemType: String(row.gem_type),
+      catalogImage: row.catalog_image ? String(row.catalog_image) : "",
+      commentId: row.comment_id ? String(row.comment_id) : undefined,
+      offerId: row.offer_id ? String(row.offer_id) : undefined,
+      isRead: Number(row.is_read) === 1,
+      createdAt: Number(row.created_at),
+    }));
+  } catch (err) {
+    console.error("[Turso DB] getNotificationsFromTurso error:", err);
+    return [];
+  }
+}
+
+export async function markNotificationReadInTurso(notificationId: string): Promise<boolean> {
+  try {
+    await safeExecute({
+      sql: "UPDATE notifications SET is_read = 1 WHERE id = ?",
+      args: [notificationId],
+    });
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] markNotificationReadInTurso error:", err);
+    return false;
+  }
+}
+
+export async function markAllNotificationsReadInTurso(recipientId: string): Promise<boolean> {
+  try {
+    await safeExecute({
+      sql: "UPDATE notifications SET is_read = 1 WHERE recipient_id = ?",
+      args: [recipientId],
+    });
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] markAllNotificationsReadInTurso error:", err);
+    return false;
   }
 }

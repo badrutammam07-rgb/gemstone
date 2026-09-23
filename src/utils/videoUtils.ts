@@ -42,7 +42,7 @@ export function parseVideoUrl(rawUrl: string): ParsedVideo {
       platform: "youtube",
       platformName: "Video Shorts",
       originalUrl: url,
-      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0&rel=0&playsinline=1&modestbranding=1&controls=1&showinfo=0&iv_load_policy=3`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&playsinline=1&modestbranding=1&controls=1&showinfo=0&iv_load_policy=3&rel=0`,
       videoId,
       isDirectVideo: false,
       isValid: true,
@@ -59,7 +59,7 @@ export function parseVideoUrl(rawUrl: string): ParsedVideo {
       platform: "youtube",
       platformName: "Video",
       originalUrl: url,
-      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0&rel=0&playsinline=1&modestbranding=1&controls=1&showinfo=0&iv_load_policy=3`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&playsinline=1&modestbranding=1&controls=1&showinfo=0&iv_load_policy=3&rel=0`,
       videoId,
       isDirectVideo: false,
       isValid: true,
@@ -100,12 +100,12 @@ export function parseVideoUrl(rawUrl: string): ParsedVideo {
     };
   }
 
-  // 3. Instagram (instagram.com/reel/ID..., instagram.com/p/ID..., instagram.com/tv/ID...)
+  // 3. Instagram (instagram.com/reel/ID..., instagram.com/p/ID..., instagram.com/reels/ID..., instagram.com/username/reel/ID...)
   // Gunakan /embed/ tanpa /captioned/ agar username pembuat akun dan deskripsi teks tidak ditampilkan
-  const igMatch = url.match(/instagram\.com\/(?:reel|p|tv)\/([a-zA-Z0-9_-]+)/i);
+  const igMatch = url.match(/instagram\.com\/(?:[a-zA-Z0-9._-]+\/)?(?:reels?|p|tv)\/([a-zA-Z0-9_-]+)/i);
   if (igMatch && igMatch[1]) {
     const postId = igMatch[1];
-    const isReel = url.toLowerCase().includes("/reel/");
+    const isReel = url.toLowerCase().includes("/reel");
     return {
       platform: "instagram",
       platformName: "Video",
@@ -114,7 +114,7 @@ export function parseVideoUrl(rawUrl: string): ParsedVideo {
       videoId: postId,
       isDirectVideo: false,
       isValid: true,
-      aspectRatio: isReel ? "9/16" : "4/5",
+      aspectRatio: isReel ? "9/16" : "1/1",
     };
   }
 

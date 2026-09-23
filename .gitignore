@@ -1,8 +1,351 @@
-node_modules/
-build/
-dist/
-coverage/
+# 1. OS GENERATED FILES
+# -----------------------------------------------------------------------------
+
+# macOS
 .DS_Store
-*.log
-.env*
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+
+# -----------------------------------------------------------------------------
+# 2. IDE & EDITOR FILES
+# -----------------------------------------------------------------------------
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# JetBrains (IntelliJ, WebStorm, PyCharm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+Session.vim
+.netrwhist
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+
+
+# -----------------------------------------------------------------------------
+# 3. ENVIRONMENT & SECRETS (CRITICAL — NEVER COMMIT)
+# -----------------------------------------------------------------------------
+
+.env
+.env.*
 !.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+secrets.json
+credentials.json
+*.credentials
+auth.json
+.token
+.netrc
+
+
+# -----------------------------------------------------------------------------
+# 4. DEPENDENCIES
+# -----------------------------------------------------------------------------
+
+# Node.js
+node_modules/
+jspm_packages/
+.pnp
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+
+# PHP
+vendor/
+composer.lock  # Uncomment if building a library (keep for apps)
+
+# Java / Gradle / Maven
+.gradle/
+build/
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+
+# Go
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock  # Uncomment if building a library (keep for apps)
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.pdb
+*.nupkg
+packages/
+
+
+# -----------------------------------------------------------------------------
+# 5. BUILD OUTPUT & COMPILED FILES
+# -----------------------------------------------------------------------------
+
+dist/
+build/
+out/
+output/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.class
+*.jar
+*.war
+
+
+# -----------------------------------------------------------------------------
+# 6. LOGS & RUNTIME DATA
+# -----------------------------------------------------------------------------
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pid
+*.seed
+*.pid.lock
+
+
+# -----------------------------------------------------------------------------
+# 7. TESTING & COVERAGE
+# -----------------------------------------------------------------------------
+
+coverage/
+.nyc_output/
+*.lcov
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+.hypothesis/
+*.cover
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.jest/
+
+
+# -----------------------------------------------------------------------------
+# 8. TEMPORARY & CACHE FILES
+# -----------------------------------------------------------------------------
+
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.sass-cache/
+*.tsbuildinfo
+
+
+# -----------------------------------------------------------------------------
+# 9. DATABASE FILES
+# -----------------------------------------------------------------------------
+
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.accdb
+*.sql.gz
+
+
+# -----------------------------------------------------------------------------
+# 10. DOCKER & CONTAINERS
+# -----------------------------------------------------------------------------
+
+docker-compose.override.yml
+.docker/
+
+
+# -----------------------------------------------------------------------------
+# 11. TERRAFORM & IaC
+# -----------------------------------------------------------------------------
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# -----------------------------------------------------------------------------
+# 12. MISC / PROJECT-SPECIFIC
+# -----------------------------------------------------------------------------
+
+# Documentation build
+_site/
+docs/_build/
+.jekyll-cache/
+.jekyll-metadata
+
+# Storybook
+storybook-static/
+
+# Next.js
+.next/
+out/
+
+# Nuxt.js
+.nuxt/
+.output/
+
+# Angular
+.angular/
+
+# SvelteKit
+.svelte-kit/
+
+# Astro
+.astro/
+
+# Vite
+*.local
+
+
+# -----------------------------------------------------------------------------
+# 13. ARCHIVES & COMPRESSED FILES
+# -----------------------------------------------------------------------------
+
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.rar
+*.7z
+*.bz2
+
+
+# -----------------------------------------------------------------------------
+# 14. MEDIA & LARGE BINARIES (uncomment if needed)
+# -----------------------------------------------------------------------------
+
+# *.mp4
+# *.mov
+# *.avi
+# *.mkv
+# *.mp3
+# *.wav
+# *.psd
+# *.ai
+# *.sketch
+# *.fig
+
+
+# =============================================================================
+# END OF .gitignore
+# =============================================================================

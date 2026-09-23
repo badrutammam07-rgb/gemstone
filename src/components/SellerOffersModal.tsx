@@ -27,6 +27,7 @@ interface Props {
   sellerId: string;
   onRespondOffer: (updatedCatalog: CatalogItem) => void;
   onOpenRoom?: (catalogId: string, offerId: string) => void;
+  onSelectUser?: (userId: string) => void;
 }
 
 export const SellerOffersModal: React.FC<Props> = ({
@@ -36,6 +37,7 @@ export const SellerOffersModal: React.FC<Props> = ({
   sellerId,
   onRespondOffer,
   onOpenRoom,
+  onSelectUser,
 }) => {
   const [respondingOfferId, setRespondingOfferId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -237,13 +239,46 @@ export const SellerOffersModal: React.FC<Props> = ({
                           src={offer.buyerAvatar}
                           alt={offer.buyerName}
                           referrerPolicy="no-referrer"
-                          className="w-10 h-10 rounded-full object-cover border border-emerald-500/40 shrink-0"
+                          onClick={() => {
+                            if (onSelectUser && offer.buyerId) {
+                              onClose();
+                              onSelectUser(offer.buyerId);
+                            }
+                          }}
+                          className={`w-10 h-10 rounded-full object-cover border border-emerald-500/40 shrink-0 ${
+                            onSelectUser && offer.buyerId
+                              ? "cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-emerald-400 transition-all"
+                              : ""
+                          }`}
+                          title={
+                            onSelectUser && offer.buyerId
+                              ? `Lihat profil pembeli ${offer.buyerName}`
+                              : undefined
+                          }
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-bold text-white">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onSelectUser && offer.buyerId) {
+                                  onClose();
+                                  onSelectUser(offer.buyerId);
+                                }
+                              }}
+                              className={`text-sm font-bold text-white text-left ${
+                                onSelectUser && offer.buyerId
+                                  ? "cursor-pointer hover:text-emerald-300 hover:underline transition-colors"
+                                  : ""
+                              }`}
+                              title={
+                                onSelectUser && offer.buyerId
+                                  ? `Lihat profil pembeli ${offer.buyerName}`
+                                  : undefined
+                              }
+                            >
                               {offer.buyerName}
-                            </span>
+                            </button>
 
                             {/* Status Badges */}
                             {isAccepted && (

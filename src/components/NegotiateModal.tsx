@@ -26,6 +26,7 @@ interface Props {
   currentUser: User;
   onOfferSuccess: (updatedCatalog: CatalogItem, offer: NegotiationOffer) => void;
   onCheckout?: (catalogId: string, offerId: string) => void;
+  onSelectUser?: (userId: string) => void;
 }
 
 export const NegotiateModal: React.FC<Props> = ({
@@ -35,6 +36,7 @@ export const NegotiateModal: React.FC<Props> = ({
   currentUser,
   onOfferSuccess,
   onCheckout,
+  onSelectUser,
 }) => {
   const [offerPriceRaw, setOfferPriceRaw] = useState("");
   const [note, setNote] = useState("");
@@ -149,7 +151,20 @@ export const NegotiateModal: React.FC<Props> = ({
                 {existingOffer ? "Ubah Penawaran Harga" : "Tawar Harga (Negosiasi)"}
               </h3>
               <p className="text-xs text-slate-400">
-                Ajukan tawaran langsung ke penjual: <strong className="text-slate-200">{catalog.username}</strong>
+                Ajukan tawaran langsung ke penjual:{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSelectUser && catalog.userId) {
+                      onClose();
+                      onSelectUser(catalog.userId);
+                    }
+                  }}
+                  className="text-emerald-300 hover:text-emerald-200 font-bold hover:underline cursor-pointer transition-colors"
+                  title={`Lihat profil penjual @${catalog.username}`}
+                >
+                  @{catalog.username}
+                </button>
               </p>
             </div>
           </div>
@@ -298,7 +313,20 @@ export const NegotiateModal: React.FC<Props> = ({
                       </span>
                     </div>
                     <span className="text-[11px] text-slate-300">
-                      Penjual: <strong>@{catalog.username}</strong>
+                      Penjual:{" "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onSelectUser && catalog.userId) {
+                            onClose();
+                            onSelectUser(catalog.userId);
+                          }
+                        }}
+                        className="text-emerald-300 hover:text-emerald-200 font-bold hover:underline cursor-pointer transition-colors"
+                        title={`Lihat profil penjual @${catalog.username}`}
+                      >
+                        @{catalog.username}
+                      </button>
                     </span>
                   </div>
 

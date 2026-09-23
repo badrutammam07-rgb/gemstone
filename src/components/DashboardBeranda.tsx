@@ -22,8 +22,10 @@ import {
   ArrowLeftRight,
   Play,
   Video,
-  Film,
   Image as ImageIcon,
+  CornerDownRight,
+  X,
+  BadgeCheck,
 } from "lucide-react";
 import { User, CatalogItem, NegotiationOffer } from "../types";
 import { formatToRupiah } from "../utils/currencyUtils";
@@ -44,6 +46,8 @@ interface Props {
     sellerName?: string;
   }) => void;
   onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
+  highlightTarget?: { catalogId: string; offerId?: string; commentId?: string; type?: string } | null;
+  onClearHighlightTarget?: () => void;
 }
 
 export const DashboardBeranda: React.FC<Props> = ({
@@ -52,10 +56,15 @@ export const DashboardBeranda: React.FC<Props> = ({
   onNavigateToProfile,
   onOpenFullscreen,
   onOpenTransactionRoom,
+  highlightTarget,
+  onClearHighlightTarget,
 }) => {
   const [catalogs, setCatalogs] = useState<CatalogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [replyingTo, setReplyingTo] = useState<
+    Record<string, { commentId: string; authorId: string; authorName: string } | null>
+  >({});
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -65,6 +74,55 @@ export const DashboardBeranda: React.FC<Props> = ({
 
   // Tab Media (Foto vs Video Detail) per kartu katalog
   const [activeMediaTabs, setActiveMediaTabs] = useState<Record<string, "photo" | "video">>({});
+
+  // Deep Link Handling dari Notifikasi: Langsung arahkan ke sasaran spesifik
+  useEffect(() => {
+    if (!highlightTarget || !highlightTarget.catalogId || catalogs.length === 0) return;
+
+    const catalog = catalogs.find((c) => c.id === highlightTarget.catalogId);
+    if (!catalog) return;
+
+    if (highlightTarget.type === "offer" && catalog.userId === currentUser.id) {
+      // Penjual menerima notifikasi penawaran: langsung buka modal penawaran
+      setViewingOffersCatalog(catalog);
+    } else if (
+      highlightTarget.type === "counter_offer" ||
+      (highlightTarget.type === "offer" && catalog.userId !== currentUser.id)
+    ) {
+      // Calon pembeli menerima harga banding / info tawaran
+      setNegotiatingCatalog(catalog);
+    } else {
+      // Komentar / balasan komentar: buka kolom komentar & tab foto
+      setActiveCommentsPostId(catalog.id);
+      setActiveMediaTabs((prev) => ({ ...prev, [catalog.id]: "photo" }));
+    }
+
+    // Scroll mulus ke elemen sasaran
+    setTimeout(() => {
+      if (highlightTarget.commentId) {
+        const commentEl = document.getElementById(`comment-${highlightTarget.commentId}`);
+        if (commentEl) {
+          commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          commentEl.classList.add("ring-2", "ring-emerald-400", "bg-emerald-950/80");
+          setTimeout(() => {
+            commentEl.classList.remove("ring-2", "ring-emerald-400", "bg-emerald-950/80");
+          }, 3500);
+          return;
+        }
+      }
+
+      const cardEl =
+        document.getElementById(`catalog-item-${highlightTarget.catalogId}`) ||
+        document.getElementById(`beranda-card-${highlightTarget.catalogId}`);
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        cardEl.classList.add("ring-2", "ring-emerald-400");
+        setTimeout(() => {
+          cardEl.classList.remove("ring-2", "ring-emerald-400");
+        }, 3000);
+      }
+    }, 350);
+  }, [highlightTarget, catalogs, currentUser.id]);
 
   const getActiveTab = (itemId: string) => activeMediaTabs[itemId] || "photo";
   const toggleMediaTab = (itemId: string, tab: "photo" | "video") => {
@@ -136,10 +194,12 @@ export const DashboardBeranda: React.FC<Props> = ({
     }
   };
 
-  // Add Comment
+  // Add Comment / Reply
   const handleAddComment = async (catalogId: string) => {
     const text = commentInputs[catalogId]?.trim();
     if (!text) return;
+
+    const replyTarget = replyingTo[catalogId];
 
     try {
       const res = await fetch(`/api/catalog/${catalogId}/comment`, {
@@ -150,6 +210,9 @@ export const DashboardBeranda: React.FC<Props> = ({
           authorName: currentUser.username,
           authorAvatar: currentUser.avatar,
           content: text,
+          replyToId: replyTarget?.commentId,
+          replyToAuthorId: replyTarget?.authorId,
+          replyToAuthorName: replyTarget?.authorName,
         }),
       });
 
@@ -164,6 +227,7 @@ export const DashboardBeranda: React.FC<Props> = ({
           })
         );
         setCommentInputs((prev) => ({ ...prev, [catalogId]: "" }));
+        setReplyingTo((prev) => ({ ...prev, [catalogId]: null }));
       }
     } catch (err) {
       console.error("Gagal menambah komentar:", err);
@@ -272,7 +336,7 @@ export const DashboardBeranda: React.FC<Props> = ({
             return (
               <article
                 key={item.id}
-                id={`beranda-card-${item.id}`}
+                id={`catalog-item-${item.id}`}
                 className="bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 rounded-3xl overflow-hidden shadow-2xl transition-all"
               >
                 {/* Header Postingan: Username & Avatar Pemilik */}
@@ -365,17 +429,6 @@ export const DashboardBeranda: React.FC<Props> = ({
                       );
                     })() : null}
                   </div>
-
-                  {item.videoUrl && getActiveTab(item.id) === "photo" && (
-                    <button
-                      type="button"
-                      onClick={() => toggleMediaTab(item.id, "video")}
-                      className="text-[11px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <Film className="w-3.5 h-3.5" />
-                      <span>Putar Video Detail</span>
-                    </button>
-                  )}
                 </div>
 
                 {/* Media Body: Video Player Langsung vs Foto Fullscreen */}
@@ -726,9 +779,25 @@ export const DashboardBeranda: React.FC<Props> = ({
                 {isCommentsOpen && (
                   <div className="p-4 sm:p-6 bg-slate-950 border-t border-slate-800 space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold text-slate-300">
-                        Diskusi & Komentar Katalog ({(item.comments || []).length})
-                      </h4>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-300">
+                          Diskusi & Komentar Katalog ({(item.comments || []).length})
+                        </h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                          <span>Penjual:</span>
+                          <button
+                            type="button"
+                            onClick={() => onSelectUser(item.userId)}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold cursor-pointer hover:underline transition-colors"
+                            title={`Lihat profil penjual @${item.username}`}
+                          >
+                            @{item.username}
+                          </button>
+                          <span className="text-[10px] text-amber-400 bg-amber-950/70 border border-amber-500/40 px-1 py-0.2 rounded font-medium">
+                            Pemilik
+                          </span>
+                        </p>
+                      </div>
                       {!isOwner && !isSold && (
                         <button
                           type="button"
@@ -756,37 +825,94 @@ export const DashboardBeranda: React.FC<Props> = ({
 
                           // Komentar Penawaran Harga
                           if (isOfferComment) {
+                            const isSellerComment =
+                              comm.authorId === item.userId || comm.authorName === item.username;
+
                             return (
                               <div
                                 key={comm.id}
-                                className="flex items-start gap-2.5 text-xs bg-slate-900/95 p-3 rounded-xl border border-emerald-900/60 shadow-sm"
+                                className={`flex items-start gap-2.5 text-xs p-3 rounded-xl border shadow-sm ${
+                                  isSellerComment
+                                    ? "bg-slate-900/95 border-amber-600/40 ring-1 ring-amber-500/20"
+                                    : "bg-slate-900/95 border-emerald-900/60"
+                                }`}
                               >
                                 <img
                                   src={comm.authorAvatar}
                                   alt={comm.authorName}
                                   referrerPolicy="no-referrer"
-                                  className="w-7 h-7 rounded-full object-cover mt-0.5 border border-emerald-500/50 shrink-0"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (comm.authorId) onSelectUser(comm.authorId);
+                                  }}
+                                  className={`w-7 h-7 rounded-full object-cover mt-0.5 shrink-0 border cursor-pointer hover:opacity-85 transition-all ${
+                                    isSellerComment
+                                      ? "border-amber-400 ring-1 ring-amber-500/50 hover:ring-amber-300"
+                                      : "border-emerald-500/50 hover:ring-1 hover:ring-emerald-400"
+                                  }`}
+                                  title={`Lihat profil ${comm.authorName}`}
                                 />
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-bold text-emerald-300">
-                                        {isMyOffer ? "Anda (Penawar)" : comm.authorName}
-                                      </span>
-                                      {comm.offerStatus === "accepted" ? (
-                                        <span className="bg-emerald-900/60 text-emerald-300 border border-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
-                                          <CheckCircle2 className="w-3 h-3" /> Disetujui
-                                        </span>
-                                      ) : comm.offerStatus === "countered" ? (
-                                        <span className="bg-sky-900/60 text-sky-300 border border-sky-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
-                                          <ArrowLeftRight className="w-3 h-3" /> Harga Banding
-                                        </span>
-                                      ) : (
-                                        <span className="bg-amber-900/60 text-amber-300 border border-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
-                                          <Clock className="w-3 h-3" /> Penawaran Diajukan
-                                        </span>
-                                      )}
+                                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                                    <div>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (comm.authorId) onSelectUser(comm.authorId);
+                                          }}
+                                          className="font-bold text-emerald-300 hover:text-emerald-200 cursor-pointer hover:underline transition-colors text-left"
+                                          title={`Lihat profil ${comm.authorName}`}
+                                        >
+                                          {isMyOffer ? "Anda" : comm.authorName}
+                                        </button>
+                                        {comm.offerStatus === "accepted" ? (
+                                          <span className="bg-emerald-900/60 text-emerald-300 border border-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" /> Disetujui
+                                          </span>
+                                        ) : comm.offerStatus === "countered" ? (
+                                          <span className="bg-sky-900/60 text-sky-300 border border-sky-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                            <ArrowLeftRight className="w-3 h-3" /> Harga Banding
+                                          </span>
+                                        ) : (
+                                          <span className="bg-amber-900/60 text-amber-300 border border-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                            <Clock className="w-3 h-3" /> Penawaran Diajukan
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Keterangan di bawah akun: Pemilik Katalog vs Calon Pembeli */}
+                                      <div className="mt-1 flex items-center">
+                                        {isSellerComment ? (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onSelectUser(item.userId);
+                                            }}
+                                            className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-300 bg-amber-950/90 border border-amber-500/50 px-2 py-0.5 rounded-md leading-none shadow-xs hover:bg-amber-900/60 cursor-pointer transition-colors"
+                                            title={`Lihat profil pemilik @${item.username}`}
+                                          >
+                                            <BadgeCheck className="w-3 h-3 text-amber-400 shrink-0" />
+                                            <span>Pemilik Katalog</span>
+                                          </button>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (comm.authorId) onSelectUser(comm.authorId);
+                                            }}
+                                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-300 bg-slate-800/90 border border-slate-700/70 px-1.5 py-0.5 rounded-md leading-none hover:bg-slate-700/80 hover:text-white cursor-pointer transition-colors"
+                                            title={`Lihat profil @${comm.authorName}`}
+                                          >
+                                            <span>Calon Pembeli</span>
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
+
                                     <span className="text-[10px] text-slate-500 shrink-0">
                                       {comm.createdAt}
                                     </span>
@@ -848,15 +974,38 @@ export const DashboardBeranda: React.FC<Props> = ({
                                         <span>
                                           {comm.offerStatus === "countered" ? (
                                             <>
-                                              Penjual dan <strong className="text-slate-100">{comm.authorName}</strong> sedang bernegosiasi harga banding.
+                                              Sedang ada negosiasi yang belum sepakat.
                                             </>
                                           ) : comm.offerStatus === "accepted" ? (
                                             <>
-                                              Penawaran harga dari <strong className="text-slate-100">{comm.authorName}</strong> telah disepakati oleh penjual!
+                                              Penawaran harga dari{" "}
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (comm.authorId) onSelectUser(comm.authorId);
+                                                }}
+                                                className="text-emerald-300 hover:text-emerald-200 hover:underline font-bold cursor-pointer transition-colors"
+                                                title={`Lihat profil ${comm.authorName}`}
+                                              >
+                                                {comm.authorName}
+                                              </button>{" "}
+                                              telah disepakati oleh penjual!
                                             </>
                                           ) : (
                                             <>
-                                              <strong className="text-slate-100">{comm.authorName}</strong> telah melakukan penawaran harga.
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (comm.authorId) onSelectUser(comm.authorId);
+                                                }}
+                                                className="text-emerald-300 hover:text-emerald-200 hover:underline font-bold cursor-pointer transition-colors"
+                                                title={`Lihat profil ${comm.authorName}`}
+                                              >
+                                                {comm.authorName}
+                                              </button>{" "}
+                                              telah melakukan penawaran harga.
                                             </>
                                           )}
                                         </span>
@@ -875,27 +1024,123 @@ export const DashboardBeranda: React.FC<Props> = ({
                           }
 
                           // Komentar Biasa
+                          const isCatalogOwner =
+                            comm.authorId === item.userId || comm.authorName === item.username;
+
                           return (
                             <div
                               key={comm.id}
-                              className="flex items-start gap-2.5 text-xs bg-slate-900/90 p-3 rounded-xl border border-slate-800"
+                              id={`comment-${comm.id}`}
+                              className={`flex items-start gap-2.5 text-xs p-3 rounded-xl border transition-all duration-300 ${
+                                isCatalogOwner
+                                  ? "bg-slate-900/95 border-amber-600/40 shadow-sm ring-1 ring-amber-500/20"
+                                  : "bg-slate-900/90 border-slate-800"
+                              }`}
                             >
                               <img
                                 src={comm.authorAvatar}
                                 alt={comm.authorName}
                                 referrerPolicy="no-referrer"
-                                className="w-7 h-7 rounded-full object-cover mt-0.5 border border-emerald-500/40"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (comm.authorId) onSelectUser(comm.authorId);
+                                }}
+                                className={`w-7 h-7 rounded-full object-cover mt-0.5 border cursor-pointer hover:opacity-85 transition-all ${
+                                  isCatalogOwner
+                                    ? "border-amber-400 ring-1 ring-amber-500/50 hover:ring-amber-300"
+                                    : "border-emerald-500/40 hover:ring-1 hover:ring-emerald-400"
+                                }`}
+                                title={`Lihat profil ${comm.authorName}`}
                               />
-                              <div className="flex-1">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-bold text-emerald-300">
-                                    {comm.authorName}
-                                  </span>
-                                  <span className="text-[10px] text-slate-500">
-                                    {comm.createdAt}
-                                  </span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between gap-2 flex-wrap">
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (comm.authorId) onSelectUser(comm.authorId);
+                                        }}
+                                        className="font-bold text-emerald-300 hover:text-emerald-200 cursor-pointer hover:underline transition-colors text-left"
+                                        title={`Lihat profil ${comm.authorName}`}
+                                      >
+                                        {comm.authorName}
+                                      </button>
+                                      {comm.replyToAuthorName && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (comm.replyToAuthorId) onSelectUser(comm.replyToAuthorId);
+                                          }}
+                                          className={`text-[10px] text-teal-400 bg-teal-950/70 border border-teal-800/60 px-1.5 py-0.5 rounded-md flex items-center gap-0.5 font-medium ${
+                                            comm.replyToAuthorId
+                                              ? "cursor-pointer hover:underline hover:text-teal-200 hover:bg-teal-900/60"
+                                              : ""
+                                          }`}
+                                          title={comm.replyToAuthorId ? `Lihat profil @${comm.replyToAuthorName}` : undefined}
+                                        >
+                                          <CornerDownRight className="w-2.5 h-2.5" /> membalas @{comm.replyToAuthorName}
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="mt-1 flex items-center">
+                                      {isCatalogOwner ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onSelectUser(item.userId);
+                                          }}
+                                          className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-300 bg-amber-950/90 border border-amber-500/50 px-1.5 py-0.5 rounded-md leading-none shadow-xs hover:bg-amber-900/60 cursor-pointer transition-colors"
+                                          title={`Lihat profil pemilik @${item.username}`}
+                                        >
+                                          <BadgeCheck className="w-3 h-3 text-amber-400 shrink-0" />
+                                          <span>Pemilik Katalog</span>
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (comm.authorId) onSelectUser(comm.authorId);
+                                          }}
+                                          className="text-[10px] text-slate-500 hover:text-slate-300 font-medium cursor-pointer hover:underline transition-colors"
+                                          title={`Lihat profil @${comm.authorName}`}
+                                        >
+                                          Anggota
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-500">
+                                      {comm.createdAt}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReplyingTo((prev) => ({
+                                          ...prev,
+                                          [item.id]: {
+                                            commentId: comm.id,
+                                            authorId: comm.authorId,
+                                            authorName: comm.authorName,
+                                          },
+                                        }));
+                                        const inputEl = document.getElementById(`input-comment-${item.id}`);
+                                        if (inputEl) inputEl.focus();
+                                      }}
+                                      className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-emerald-950/50 transition-colors cursor-pointer"
+                                      title={`Balas komentar ${comm.authorName}`}
+                                    >
+                                      <CornerDownRight className="w-2.5 h-2.5" />
+                                      <span>Balas</span>
+                                    </button>
+                                  </div>
                                 </div>
-                                <p className="text-slate-200 mt-1 leading-relaxed">
+                                <p className="text-slate-200 mt-1.5 leading-relaxed">
                                   {comm.content}
                                 </p>
                               </div>
@@ -905,9 +1150,30 @@ export const DashboardBeranda: React.FC<Props> = ({
                       )}
                     </div>
 
+                    {/* Indikator Membalas Komentar */}
+                    {replyingTo[item.id] && (
+                      <div className="flex items-center justify-between text-[11px] bg-slate-900 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-lg mb-1">
+                        <span className="flex items-center gap-1 truncate">
+                          <CornerDownRight className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <span>
+                            Membalas <strong className="text-white">@{replyingTo[item.id]?.authorName}</strong>
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setReplyingTo((prev) => ({ ...prev, [item.id]: null }))}
+                          className="text-slate-400 hover:text-white cursor-pointer ml-2"
+                          title="Batal Balas"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
                     {/* Input Komentar Baru */}
                     <div className="flex items-center gap-2 pt-2">
                       <input
+                        id={`input-comment-${item.id}`}
                         type="text"
                         value={commentInputs[item.id] || ""}
                         onChange={(e) =>
@@ -922,7 +1188,11 @@ export const DashboardBeranda: React.FC<Props> = ({
                             handleAddComment(item.id);
                           }
                         }}
-                        placeholder="Tulis komentar publik pada katalog ini..."
+                        placeholder={
+                          replyingTo[item.id]
+                            ? `Tulis balasan untuk @${replyingTo[item.id]?.authorName}...`
+                            : "Tulis komentar publik pada katalog ini..."
+                        }
                         className="flex-1 bg-slate-900 border border-slate-700 text-xs text-white px-3.5 py-2.5 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-slate-500"
                       />
                       <button
@@ -950,6 +1220,7 @@ export const DashboardBeranda: React.FC<Props> = ({
           catalog={negotiatingCatalog}
           currentUser={currentUser}
           onOfferSuccess={handleOfferSuccess}
+          onSelectUser={onSelectUser}
           onCheckout={(catalogId, offerId) => {
             if (onOpenTransactionRoom) {
               onOpenTransactionRoom({ catalogId, offerId });
@@ -966,6 +1237,7 @@ export const DashboardBeranda: React.FC<Props> = ({
           catalog={viewingOffersCatalog}
           sellerId={currentUser.id}
           onRespondOffer={handleRespondOffer}
+          onSelectUser={onSelectUser}
           onOpenRoom={(catalogId, offerId) => {
             if (onOpenTransactionRoom) {
               onOpenTransactionRoom({ catalogId, offerId });

@@ -22,8 +22,37 @@ import {
   deleteExpiredSoldCatalogsFromTurso,
   deleteInactiveTransactionRoomsFromTurso,
   deleteTransactionRoomsByCatalogId,
+  saveNotificationToTurso,
+  getNotificationsFromTurso,
+  markNotificationReadInTurso,
+  markAllNotificationsReadInTurso,
 } from "./server/turso";
 import { uploadMediaPhoto } from "./server/cloudinary";
+
+export type NotificationType =
+  | "offer"
+  | "counter_offer"
+  | "offer_accepted"
+  | "comment"
+  | "comment_reply";
+
+export interface AppNotification {
+  id: string;
+  recipientId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar?: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  catalogId: string;
+  gemType: string;
+  catalogImage?: string;
+  commentId?: string;
+  offerId?: string;
+  isRead: boolean;
+  createdAt: number;
+}
 
 interface User {
   id: string;
@@ -65,6 +94,9 @@ interface Comment {
   authorAvatar: string;
   content: string;
   createdAt: string;
+  replyToId?: string;
+  replyToAuthorId?: string;
+  replyToAuthorName?: string;
   isOffer?: boolean;
   offerId?: string;
   offerPrice?: string;
@@ -165,6 +197,7 @@ function loadDatabase(): {
   users: User[];
   catalogs: CatalogItem[];
   transactionRooms: TransactionRoom[];
+  notifications: AppNotification[];
 } {
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -176,12 +209,15 @@ function loadDatabase(): {
         transactionRooms: Array.isArray(parsed.transactionRooms)
           ? parsed.transactionRooms
           : [],
+        notifications: Array.isArray(parsed.notifications)
+          ? parsed.notifications
+          : [],
       };
     }
   } catch (err) {
     console.error("Gagal membaca database.json:", err);
   }
-  return { users: [], catalogs: [], transactionRooms: [] };
+  return { users: [], catalogs: [], transactionRooms: [], notifications: [] };
 }
 
 const initialDb = loadDatabase();
@@ -189,6 +225,7 @@ const initialDb = loadDatabase();
 const users: User[] = initialDb.users;
 const catalogs: CatalogItem[] = initialDb.catalogs;
 let transactionRooms: TransactionRoom[] = initialDb.transactionRooms;
+let notifications: AppNotification[] = initialDb.notifications || [];
 
 // 1 Minggu dalam Milidetik (7 hari) untuk masa kadaluarsa jika tidak aktif komunikasinya / setelah terjual
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -273,12 +310,50 @@ function saveDatabase() {
   try {
     fs.writeFileSync(
       DB_FILE,
-      JSON.stringify({ users, catalogs, transactionRooms }, null, 2),
+      JSON.stringify({ users, catalogs, transactionRooms, notifications }, null, 2),
       "utf-8"
     );
   } catch (err) {
     console.error("Gagal menyimpan database.json:", err);
   }
+}
+
+async function addAppNotification(notifData: {
+  recipientId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar?: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  catalogId: string;
+  gemType: string;
+  catalogImage?: string;
+  commentId?: string;
+  offerId?: string;
+}): Promise<AppNotification | null> {
+  // Jangan beri notifikasi ke diri sendiri
+  if (notifData.recipientId === notifData.actorId) return null;
+
+  const newNotif: AppNotification = {
+    ...notifData,
+    id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    isRead: false,
+    createdAt: Date.now(),
+  };
+
+  notifications.unshift(newNotif);
+  // Simpan maksimal 150 notifikasi di memori
+  if (notifications.length > 150) {
+    notifications = notifications.slice(0, 150);
+  }
+
+  saveDatabase();
+  saveNotificationToTurso(newNotif).catch((e) =>
+    console.warn("[Turso DB] Error saving notification:", e)
+  );
+
+  return newNotif;
 }
 
 // Pastikan file database tersinkronisasi
@@ -374,7 +449,7 @@ function sanitizeCatalogForViewer(catalog: CatalogItem, viewerId?: string): Cata
     // Jika calon pembeli lain / pengunjung umum: sembunyikan nominal penawaran maupun harga banding!
     let publicContent = `${comm.authorName} telah melakukan penawaran harga.`;
     if (comm.offerStatus === "countered") {
-      publicContent = `Penjual dan ${comm.authorName} sedang dalam proses tawar-menawar harga banding.`;
+      publicContent = `Sedang ada negosiasi yang belum sepakat.`;
     } else if (comm.offerStatus === "accepted") {
       publicContent = `Penawaran harga dari ${comm.authorName} telah disepakati oleh penjual!`;
     }
@@ -433,6 +508,77 @@ async function startServer() {
   // Health
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", app: "Komunitas Batu Mulia API" });
+  });
+
+  // Cache video yang berhasil diekstrak agar pemuatan super cepat
+  const videoStreamCache = new Map<string, { directUrl: string; expiresAt: number }>();
+
+  // Endpoint untuk mengekstrak dan menyelesaikan stream video langsung (.mp4)
+  // Memungkinkan video diputar dengan tag native HTML5 <video> sehingga 100% Auto-play dan Replay (Loop) tanpa henti
+  app.get("/api/resolve-video", async (req, res) => {
+    try {
+      const videoUrl = String(req.query.url || "").trim();
+      if (!videoUrl) {
+        return res.status(400).json({ success: false, message: "URL video tidak diberikan." });
+      }
+
+      // Periksa cache
+      const cached = videoStreamCache.get(videoUrl);
+      if (cached && cached.expiresAt > Date.now()) {
+        return res.json({ success: true, directUrl: cached.directUrl, cached: true });
+      }
+
+      // 1. Format video langsung
+      if (videoUrl.match(/\.(mp4|webm|ogg|mov)(\?.*)?$/i)) {
+        return res.json({ success: true, directUrl: videoUrl, platform: "direct" });
+      }
+
+      // 2. Instagram Reel / Post
+      const igMatch = videoUrl.match(/instagram\.com\/(?:p|reel|reels|share\/reel)\/([A-Za-z0-9_-]+)/i);
+      if (igMatch) {
+        const shortcode = igMatch[1];
+        const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/`;
+        // Fetch tanpa custom User-Agent agar Instagram mengembalikan format SSR yang memuat video_url langsung
+        const igRes = await fetch(embedUrl);
+
+        if (igRes.ok) {
+          const html = await igRes.text();
+          const idx = html.indexOf("video_url");
+          if (idx !== -1) {
+            const httpIdx = html.indexOf("http", idx);
+            const endQuoteIdx = html.indexOf('"', httpIdx);
+            if (httpIdx !== -1 && endQuoteIdx !== -1) {
+              const rawUrl = html.substring(httpIdx, endQuoteIdx);
+              const cleanUrl = rawUrl
+                .replace(/\\u0026/gi, "&")
+                .replace(/\\u00253D/gi, "%3D")
+                .replace(/\\u003D/gi, "=")
+                .replace(/\\+/g, "");
+
+              if (cleanUrl.startsWith("http") && cleanUrl.includes(".mp4")) {
+                // Simpan di cache selama 3 jam
+                videoStreamCache.set(videoUrl, {
+                  directUrl: cleanUrl,
+                  expiresAt: Date.now() + 3 * 60 * 60 * 1000,
+                });
+
+                return res.json({
+                  success: true,
+                  directUrl: cleanUrl,
+                  platform: "instagram",
+                  shortcode,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return res.json({ success: false, directUrl: null });
+    } catch (err: any) {
+      console.warn("[Resolve Video Error]", err?.message || err);
+      return res.json({ success: false, directUrl: null });
+    }
   });
 
   // Media Photo Upload to Cloudinary
@@ -1247,7 +1393,15 @@ async function startServer() {
   // "Setiap user bisa mengomentari katalog tersebut."
   app.post("/api/catalog/:id/comment", (req, res) => {
     const { id } = req.params;
-    const { authorId, authorName, authorAvatar, content } = req.body;
+    const {
+      authorId,
+      authorName,
+      authorAvatar,
+      content,
+      replyToId,
+      replyToAuthorId,
+      replyToAuthorName,
+    } = req.body;
 
     if (!content || !content.trim()) {
       return res.status(400).json({ success: false, message: "Komentar tidak boleh kosong." });
@@ -1262,9 +1416,14 @@ async function startServer() {
       id: `comm-${Date.now()}`,
       authorId: authorId || "user-unknown",
       authorName: authorName || "Pengguna",
-      authorAvatar: authorAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
+      authorAvatar:
+        authorAvatar ||
+        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80",
       content: content.trim(),
       createdAt: "Baru saja",
+      replyToId: replyToId || undefined,
+      replyToAuthorId: replyToAuthorId || undefined,
+      replyToAuthorName: replyToAuthorName || undefined,
     };
 
     catalog.comments.push(newComment);
@@ -1272,6 +1431,40 @@ async function startServer() {
     saveCatalogToTurso(catalog).catch((e) =>
       console.warn(`[Turso DB] Failed saving commented catalog ${catalog.id}:`, e)
     );
+
+    // 1. Notifikasi jika membalas komentar orang lain
+    if (replyToAuthorId && replyToAuthorId !== authorId) {
+      addAppNotification({
+        recipientId: replyToAuthorId,
+        actorId: authorId,
+        actorName: authorName || "Pengguna",
+        actorAvatar: authorAvatar,
+        type: "comment_reply",
+        title: "Balasan Komentar",
+        message: `${authorName || "Seseorang"} membalas komentar Anda di batu "${catalog.gemType}": "${content.trim().slice(0, 65)}"`,
+        catalogId: catalog.id,
+        gemType: catalog.gemType,
+        catalogImage: catalog.images?.[0] || "",
+        commentId: newComment.id,
+      }).catch((e) => console.warn("Failed sending reply notif:", e));
+    }
+
+    // 2. Notifikasi komentar baru ke pemilik katalog
+    if (catalog.userId !== authorId && catalog.userId !== replyToAuthorId) {
+      addAppNotification({
+        recipientId: catalog.userId,
+        actorId: authorId,
+        actorName: authorName || "Pengguna",
+        actorAvatar: authorAvatar,
+        type: "comment",
+        title: "Komentar Baru",
+        message: `${authorName || "Seseorang"} mengomentari batu permata Anda "${catalog.gemType}": "${content.trim().slice(0, 65)}"`,
+        catalogId: catalog.id,
+        gemType: catalog.gemType,
+        catalogImage: catalog.images?.[0] || "",
+        commentId: newComment.id,
+      }).catch((e) => console.warn("Failed sending comment notif:", e));
+    }
 
     return res.status(201).json({
       success: true,
@@ -1392,6 +1585,21 @@ async function startServer() {
       console.warn(`[Turso DB] Failed saving offer catalog ${catalog.id}:`, e)
     );
 
+    // Notifikasi penawaran baru ke penjual
+    addAppNotification({
+      recipientId: catalog.userId,
+      actorId: buyerId,
+      actorName: buyerName || "Calon Pembeli",
+      actorAvatar: buyerAvatar,
+      type: "offer",
+      title: "Penawaran Harga Baru",
+      message: `${buyerName || "Seseorang"} mengajukan penawaran harga sebesar ${offerPrice} untuk batu "${catalog.gemType}".`,
+      catalogId: catalog.id,
+      gemType: catalog.gemType,
+      catalogImage: catalog.images?.[0] || "",
+      offerId: newOffer.id,
+    }).catch((e) => console.warn("Failed sending offer notif:", e));
+
     console.log(`[NEGO PRIVAT] ${buyerName} menawar ${catalog.gemType}: ${offerPrice}`);
 
     const sanitizedCatalog = sanitizeCatalogForViewer(catalog, buyerId);
@@ -1469,6 +1677,21 @@ async function startServer() {
     saveCatalogToTurso(catalog).catch((e) =>
       console.warn(`[Turso DB] Failed saving accepted offer catalog ${catalog.id}:`, e)
     );
+
+    // Notifikasi persetujuan tawaran ke pembeli
+    addAppNotification({
+      recipientId: offer.buyerId,
+      actorId: sellerId,
+      actorName: sellerName || "Penjual",
+      actorAvatar: sellerAvatar,
+      type: "offer_accepted",
+      title: "Penawaran Anda Disetujui!",
+      message: `Selamat! Penjual telah menyetujui tawaran Anda sebesar ${offer.offerPrice} untuk batu "${catalog.gemType}".`,
+      catalogId: catalog.id,
+      gemType: catalog.gemType,
+      catalogImage: catalog.images?.[0] || "",
+      offerId: offer.id,
+    }).catch((e) => console.warn("Failed sending accept notif:", e));
 
     const sanitizedCatalog = sanitizeCatalogForViewer(catalog, sellerId);
 
@@ -1557,6 +1780,21 @@ async function startServer() {
       console.warn(`[Turso DB] Failed saving counter offer catalog ${catalog.id}:`, e)
     );
 
+    // Notifikasi harga banding ke calon pembeli
+    addAppNotification({
+      recipientId: offer.buyerId,
+      actorId: sellerId,
+      actorName: sellerName || "Penjual",
+      actorAvatar: sellerAvatar,
+      type: "counter_offer",
+      title: "Pengajuan Harga Banding",
+      message: `Penjual mengajukan harga banding ${trimmedCounterPrice} untuk batu "${catalog.gemType}".`,
+      catalogId: catalog.id,
+      gemType: catalog.gemType,
+      catalogImage: catalog.images?.[0] || "",
+      offerId: offer.id,
+    }).catch((e) => console.warn("Failed sending counter notif:", e));
+
     console.log(
       `[HARGA BANDING] Penjual ${sellerName} mengajukan harga banding ${trimmedCounterPrice} ke ${offer.buyerName} (Tawaran awal: ${offer.offerPrice})`
     );
@@ -1624,6 +1862,21 @@ async function startServer() {
     saveCatalogToTurso(catalog).catch((e) =>
       console.warn(`[Turso DB] Failed saving buyer-accept catalog ${catalog.id}:`, e)
     );
+
+    // Notifikasi kesepakatan harga banding ke penjual
+    addAppNotification({
+      recipientId: catalog.userId,
+      actorId: buyerId,
+      actorName: offer.buyerName,
+      actorAvatar: offer.buyerAvatar,
+      type: "offer_accepted",
+      title: "Harga Banding Disepakati!",
+      message: `${offer.buyerName} menyetujui harga banding ${finalPrice} untuk batu "${catalog.gemType}". Silakan lanjutkan transaksi!`,
+      catalogId: catalog.id,
+      gemType: catalog.gemType,
+      catalogImage: catalog.images?.[0] || "",
+      offerId: offer.id,
+    }).catch((e) => console.warn("Failed sending buyer-accept notif:", e));
 
     const sanitizedCatalog = sanitizeCatalogForViewer(catalog, buyerId);
 
@@ -2070,6 +2323,67 @@ async function startServer() {
       message: newMsg,
       room,
     });
+  });
+
+  // 24. Notifikasi Pengguna: Penawaran, Komentar & Balasan Komentar
+  // "Dan buatkan notifikasi pada akun jika ada yang melakukan penawaran, komentar atau membalas komentar anda. Jika itu d klik langsung arahkan ke sasaran tersebut"
+  app.get("/api/notifications/:userId", async (req, res) => {
+    const { userId } = req.params;
+    try {
+      let userNotifs = notifications.filter((n) => n.recipientId === userId);
+      // Jika di memori masih kosong, ambil dari Turso
+      if (userNotifs.length === 0) {
+        const fromTurso = await getNotificationsFromTurso(userId);
+        if (fromTurso && fromTurso.length > 0) {
+          userNotifs = fromTurso;
+          fromTurso.forEach((fn) => {
+            if (!notifications.some((n) => n.id === fn.id)) {
+              notifications.push(fn);
+            }
+          });
+        }
+      }
+      userNotifs.sort((a, b) => b.createdAt - a.createdAt);
+      const unreadCount = userNotifs.filter((n) => !n.isRead).length;
+
+      return res.json({
+        success: true,
+        notifications: userNotifs,
+        unreadCount,
+      });
+    } catch (err: any) {
+      console.error("Gagal mengambil notifikasi:", err);
+      return res.status(500).json({ success: false, message: "Gagal mengambil notifikasi." });
+    }
+  });
+
+  // Tandai 1 Notifikasi Dibaca
+  app.post("/api/notifications/:id/read", (req, res) => {
+    const { id } = req.params;
+    const notif = notifications.find((n) => n.id === id);
+    if (notif) {
+      notif.isRead = true;
+      saveDatabase();
+    }
+    markNotificationReadInTurso(id).catch((e) =>
+      console.warn("[Turso DB] Error markNotificationReadInTurso:", e)
+    );
+    return res.json({ success: true });
+  });
+
+  // Tandai Semua Notifikasi Dibaca
+  app.post("/api/notifications/:userId/read-all", (req, res) => {
+    const { userId } = req.params;
+    notifications.forEach((n) => {
+      if (n.recipientId === userId) {
+        n.isRead = true;
+      }
+    });
+    saveDatabase();
+    markAllNotificationsReadInTurso(userId).catch((e) =>
+      console.warn("[Turso DB] Error markAllNotificationsReadInTurso:", e)
+    );
+    return res.json({ success: true });
   });
 
   // Vite Middleware

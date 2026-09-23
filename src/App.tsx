@@ -9,7 +9,8 @@ import { SettingsModal } from "./components/SettingsModal";
 import { ImageViewerModal } from "./components/ImageViewerModal";
 import { TransactionRoomModal } from "./components/TransactionRoomModal";
 import { MyRoomsListModal } from "./components/MyRoomsListModal";
-import { User } from "./types";
+import { NotificationModal } from "./components/NotificationModal";
+import { User, AppNotification } from "./types";
 import { CheckCircle2 } from "lucide-react";
 
 export default function App() {
@@ -31,6 +32,17 @@ export default function App() {
     offerId?: string;
   } | null>(null);
   const [isMyRoomsListOpen, setIsMyRoomsListOpen] = useState(false);
+
+  // Notification state
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState<number>(0);
+  const [isNotifModalOpen, setIsNotifModalOpen] = useState<boolean>(false);
+  const [highlightTarget, setHighlightTarget] = useState<{
+    catalogId: string;
+    offerId?: string;
+    commentId?: string;
+    type?: string;
+  } | null>(null);
 
   // Lightbox / Fullscreen Image viewer state for gemstone catalogs (avatars are excluded)
   const [fullscreenImage, setFullscreenImage] = useState<{
@@ -125,6 +137,67 @@ export default function App() {
     } catch {}
     setCurrentAuthView("login");
     setIsSettingsOpen(false);
+    setNotifications([]);
+    setUnreadNotifCount(0);
+  };
+
+  // Ambil data notifikasi akun secara periodik
+  const fetchNotifications = async () => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`/api/notifications/${currentUser.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setNotifications(data.notifications || []);
+          setUnreadNotifCount(data.unreadCount || 0);
+        }
+      }
+    } catch (err) {
+      console.error("Gagal mengambil notifikasi:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 10000); // Polling setiap 10 detik
+    return () => clearInterval(interval);
+  }, [currentUser?.id]);
+
+  const handleMarkNotifRead = async (notifId: string) => {
+    try {
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notifId ? { ...n, isRead: true } : n))
+      );
+      setUnreadNotifCount((prev) => Math.max(0, prev - 1));
+      await fetch(`/api/notifications/${notifId}/read`, { method: "POST" });
+    } catch (e) {
+      console.error("Error mark notif read:", e);
+    }
+  };
+
+  const handleMarkAllNotifsRead = async () => {
+    if (!currentUser) return;
+    try {
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadNotifCount(0);
+      await fetch(`/api/notifications/${currentUser.id}/read-all`, { method: "POST" });
+    } catch (e) {
+      console.error("Error mark all notifs read:", e);
+    }
+  };
+
+  // Arahkan langsung ke sasaran postingan / komentar / penawaran ketika notifikasi diklik
+  const handleNavigateToTarget = (notif: AppNotification) => {
+    setIsNotifModalOpen(false);
+    setMainView("beranda");
+    setHighlightTarget({
+      catalogId: notif.catalogId,
+      offerId: notif.offerId,
+      commentId: notif.commentId,
+      type: notif.type,
+    });
   };
 
   // If user is logged in, render the main authenticated application
@@ -148,6 +221,11 @@ export default function App() {
             setMainView("profile");
           }}
           onOpenRoomsList={() => setIsMyRoomsListOpen(true)}
+          unreadNotifCount={unreadNotifCount}
+          onOpenNotifications={() => {
+            fetchNotifications();
+            setIsNotifModalOpen(true);
+          }}
         />
 
         {/* System Notice Toast */}
@@ -175,6 +253,8 @@ export default function App() {
               }}
               onOpenFullscreen={(data) => setFullscreenImage(data)}
               onOpenTransactionRoom={(params) => setActiveRoomParams(params)}
+              highlightTarget={highlightTarget}
+              onClearHighlightTarget={() => setHighlightTarget(null)}
             />
           ) : (
             <ProfileView
@@ -244,6 +324,17 @@ export default function App() {
           price={fullscreenImage?.price}
           sellerName={fullscreenImage?.sellerName}
           onClose={() => setFullscreenImage(null)}
+        />
+
+        {/* Modal Notifikasi Akun */}
+        <NotificationModal
+          isOpen={isNotifModalOpen}
+          onClose={() => setIsNotifModalOpen(false)}
+          notifications={notifications}
+          unreadCount={unreadNotifCount}
+          onMarkAsRead={handleMarkNotifRead}
+          onMarkAllAsRead={handleMarkAllNotifsRead}
+          onNavigateToTarget={handleNavigateToTarget}
         />
       </div>
     );

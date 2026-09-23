@@ -36,6 +36,9 @@ export interface Comment {
   authorAvatar: string;
   content: string;
   createdAt: string;
+  replyToId?: string;
+  replyToAuthorId?: string;
+  replyToAuthorName?: string;
   // Field khusus fitur negosiasi privat
   isOffer?: boolean;
   offerId?: string;
@@ -119,5 +122,30 @@ export interface TransactionRoom {
   lastActivityAt: number; // Waktu komunikasi terakhir, otomatis reset tiap ada chat baru
   expiresAt: number;      // lastActivityAt + 7 hari (otomatis terhapus jika 1 minggu tidak aktif)
   messages: RoomChatMessage[];
+}
+
+export type NotificationType =
+  | "offer"
+  | "counter_offer"
+  | "offer_accepted"
+  | "comment"
+  | "comment_reply";
+
+export interface AppNotification {
+  id: string;
+  recipientId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  catalogId: string;
+  gemType: string;
+  catalogImage?: string;
+  commentId?: string;
+  offerId?: string;
+  isRead: boolean;
+  createdAt: number;
 }
 
