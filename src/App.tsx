@@ -31,6 +31,7 @@ export default function App() {
     roomId?: string;
     catalogId?: string;
     offerId?: string;
+    verificationData?: any;
   } | null>(null);
   const [isMyRoomsListOpen, setIsMyRoomsListOpen] = useState(false);
 
@@ -374,6 +375,7 @@ export default function App() {
             catalogId={activeRoomParams.catalogId}
             offerId={activeRoomParams.offerId}
             currentUser={currentUser}
+            initialVerification={activeRoomParams.verificationData}
             onOpenFullscreen={(data) => setFullscreenImage(data)}
           />
         )}
@@ -408,6 +410,10 @@ export default function App() {
           onMarkAsRead={handleMarkNotifRead}
           onMarkAllAsRead={handleMarkAllNotifsRead}
           onNavigateToTarget={handleNavigateToTarget}
+          onOpenRoom={(roomId, catalogId, offerId) => {
+            setIsNotifModalOpen(false);
+            setActiveRoomParams({ roomId, catalogId, offerId });
+          }}
         />
 
         {/* Modal Live Streaming (100% In-Memory - Zero Persistence Database) */}

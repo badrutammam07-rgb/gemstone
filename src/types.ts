@@ -104,6 +104,16 @@ export interface RoomChatMessage {
   content: string;
   createdAt: string;
   timestamp: number;
+  securityCard?: {
+    role: "seller" | "buyer";
+    partyName: string;
+    facePhotoUrl: string;
+    latitude: number;
+    longitude: number;
+    accuracyMeters: number;
+    locationName: string;
+    verifiedAt: number;
+  };
 }
 
 export interface TransactionRoom {
@@ -128,6 +138,8 @@ export type NotificationType =
   | "offer"
   | "counter_offer"
   | "offer_accepted"
+  | "room_invitation"
+  | "room_accepted"
   | "comment"
   | "comment_reply";
 
@@ -145,6 +157,7 @@ export interface AppNotification {
   catalogImage?: string;
   commentId?: string;
   offerId?: string;
+  roomId?: string;
   isRead: boolean;
   createdAt: number;
 }

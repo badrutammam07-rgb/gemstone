@@ -126,14 +126,19 @@ export const InputCatalogModal: React.FC<Props> = ({
       return;
     }
 
+    if (!imageUrl || !imageUrl.trim()) {
+      setErrorMessage(
+        "Foto batu permata wajib diupload dari media perangkat (galeri atau kamera), bukan dari URL."
+      );
+      return;
+    }
+
     setIsSaving(true);
 
     try {
-      let finalImg = imageUrl.trim()
-        ? imageUrl.trim()
-        : sampleImages[Math.floor(Math.random() * sampleImages.length)];
+      let finalImg = imageUrl.trim();
 
-      // Upload to Cloudinary if it's a freshly chosen base64 image
+      // Upload to Cloudinary if it's a freshly chosen base64 image from device
       if (finalImg.startsWith("data:")) {
         try {
           const uploadRes = await fetch("/api/upload", {
@@ -163,6 +168,7 @@ export const InputCatalogModal: React.FC<Props> = ({
           description: description.trim(),
           videoUrl: videoUrl.trim(),
           images: [finalImg],
+          publishDirectly: true,
         }),
       });
 
@@ -423,130 +429,116 @@ export const InputCatalogModal: React.FC<Props> = ({
             )}
           </div>
 
-          {/* Foto Permata dengan Unggah Media & Kompresi Otomatis Max 100KB */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-slate-300 font-semibold text-xs sm:text-sm flex items-center gap-1.5">
-                <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
-                Foto Batu Permata
-              </label>
-              <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> Auto Kompres Max 100 KB
-              </span>
-            </div>
+            {/* Foto Permata dengan Unggah Media Perangkat & Kompresi Otomatis Max 100KB */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-slate-300 font-semibold text-xs sm:text-sm flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Foto Batu Permata</span>
+                  <span className="bg-emerald-950 text-emerald-300 text-[10px] font-black px-2 py-0.5 rounded-md border border-emerald-800 tracking-wide">
+                    WAJIB DARI PERANGKAT
+                  </span>
+                </label>
+                <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3" /> Auto Kompres Max 100 KB
+                </span>
+              </div>
 
-            {/* Hidden device file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleDeviceImageUpload}
-            />
+              {/* Hidden device file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleDeviceImageUpload}
+              />
 
-            {/* Upload Area / Image Preview */}
-            {imageUrl ? (
-              <div className="relative rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 p-2 flex items-center gap-3">
-                <div
-                  className="relative w-20 h-20 rounded-xl overflow-hidden shrink-0 cursor-pointer group bg-black"
-                  onClick={() => {
-                    if (onOpenFullscreen) {
-                      onOpenFullscreen({
-                        imageUrl,
-                        title: gemType || "Pratinjau Foto Batu Permata",
-                        subtitle: dimensions || undefined,
-                        price: price || undefined,
-                      });
-                    }
-                  }}
-                  title="Klik untuk melihat foto dalam tampilan penuh"
-                >
-                  <img
-                    src={imageUrl}
-                    alt="Pratinjau Batu"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                    <Maximize2 className="w-5 h-5 text-white" />
+              {/* Upload Area / Image Preview */}
+              {imageUrl ? (
+                <div className="relative rounded-2xl overflow-hidden border border-emerald-700/60 bg-slate-950 p-2.5 flex items-center gap-3">
+                  <div
+                    className="relative w-20 h-20 rounded-xl overflow-hidden shrink-0 cursor-pointer group bg-black border border-slate-700"
+                    onClick={() => {
+                      if (onOpenFullscreen) {
+                        onOpenFullscreen({
+                          imageUrl,
+                          title: gemType || "Pratinjau Foto Batu Permata",
+                          subtitle: dimensions || undefined,
+                          price: price || undefined,
+                        });
+                      }
+                    }}
+                    title="Klik untuk melihat foto dalam tampilan penuh"
+                  >
+                    <img
+                      src={imageUrl}
+                      alt="Pratinjau Batu"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <Maximize2 className="w-5 h-5 text-white" />
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-bold text-white block truncate flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      Foto Terpilih dari Perangkat
+                    </span>
+                    {compressedSizeKb ? (
+                      <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1 mt-0.5">
+                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                        Ukuran: {compressedSizeKb} (Maks. 100 KB)
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-slate-400">Siap disimpan ke katalog</span>
+                    )}
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Klik gambar untuk melihat tampilan penuh
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Ganti Foto dari Perangkat"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="hidden sm:inline">Ganti</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImageUrl("");
+                        setCompressedSizeKb(null);
+                      }}
+                      className="bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Hapus Foto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Hapus</span>
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex-1 min-w-0">
-                  <span className="text-xs font-bold text-white block truncate">
-                    Foto Berhasil Dipilih
+              ) : (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-emerald-600/50 hover:border-emerald-400 bg-slate-950/80 hover:bg-slate-950 rounded-2xl p-5 text-center cursor-pointer transition-all group shadow-inner"
+                >
+                  <div className="p-3 bg-emerald-500/10 group-hover:bg-emerald-500/20 text-emerald-400 rounded-full w-fit mx-auto mb-2 transition-colors">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <span className="text-xs sm:text-sm font-bold text-slate-200 block group-hover:text-emerald-300 transition-colors">
+                    {isCompressing ? "Mengompres Foto (Maks 100 KB)..." : "Upload Foto dari Media Perangkat (Kamera / Galeri)"}
                   </span>
-                  {compressedSizeKb ? (
-                    <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1 mt-0.5">
-                      <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                      Ukuran: {compressedSizeKb} (Maks. 100 KB)
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-400">Siap disimpan ke katalog</span>
-                  )}
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Klik gambar untuk melihat tampilan penuh
-                  </p>
+                  <span className="text-[11px] text-slate-400 block mt-1">
+                    Wajib upload file foto asli dari galeri/kamera hp/laptop • Otomatis dikompresi max 100KB tanpa mengurangi kilau giwang batu
+                  </span>
                 </div>
-
-                <div className="flex flex-col gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
-                    title="Ganti Foto"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="hidden sm:inline">Ganti</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setImageUrl("");
-                      setCompressedSizeKb(null);
-                    }}
-                    className="bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
-                    title="Hapus Foto"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Hapus</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 bg-slate-950/60 hover:bg-slate-950 rounded-2xl p-4 text-center cursor-pointer transition-all group"
-              >
-                <div className="p-2.5 bg-emerald-500/10 group-hover:bg-emerald-500/20 text-emerald-400 rounded-full w-fit mx-auto mb-2 transition-colors">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-bold text-slate-200 block group-hover:text-emerald-300 transition-colors">
-                  {isCompressing ? "Mengompres Foto (Maks 100 KB)..." : "Pilih / Ambil Foto dari Perangkat"}
-                </span>
-                <span className="text-[11px] text-slate-400 block mt-0.5">
-                  Mendukung kamera & galeri • Otomatis dikompresi max 100KB tanpa mengurangi kualitas
-                </span>
-              </div>
-            )}
-
-            {/* Alternatif Masukkan URL */}
-            <div className="pt-1">
-              <label className="block text-[11px] text-slate-400 mb-1">
-                Atau masukkan URL gambar langsung (opsional):
-              </label>
-              <input
-                id="input-catalog-image"
-                type="url"
-                value={imageUrl.startsWith("data:") ? "" : imageUrl}
-                onChange={(e) => {
-                  setImageUrl(e.target.value);
-                  setCompressedSizeKb(null);
-                }}
-                placeholder="https://... (Kosongkan jika sudah memilih foto dari galeri)"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
+              )}
             </div>
-          </div>
 
           {/* Buttons */}
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">

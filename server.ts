@@ -45,6 +45,8 @@ export type NotificationType =
   | "offer"
   | "counter_offer"
   | "offer_accepted"
+  | "room_invitation"
+  | "room_accepted"
   | "comment"
   | "comment_reply";
 
@@ -62,6 +64,7 @@ export interface AppNotification {
   catalogImage?: string;
   commentId?: string;
   offerId?: string;
+  roomId?: string;
   isRead: boolean;
   createdAt: number;
 }
@@ -343,6 +346,7 @@ async function addAppNotification(notifData: {
   catalogImage?: string;
   commentId?: string;
   offerId?: string;
+  roomId?: string;
 }): Promise<AppNotification | null> {
   // Jangan beri notifikasi ke diri sendiri
   if (notifData.recipientId === notifData.actorId) return null;
@@ -1246,7 +1250,11 @@ async function startServer() {
         if (typeof img === "string" && img.startsWith("data:")) {
           try {
             const upRes = await uploadMediaPhoto(img, "katalog");
-            processedImages.push(upRes.url);
+            if (upRes && upRes.url) {
+              processedImages.push(upRes.url);
+            } else {
+              processedImages.push(img);
+            }
           } catch (uploadErr) {
             console.warn("[Cloudinary] Upload catalog photo error:", uploadErr);
             processedImages.push(img);
@@ -1257,13 +1265,16 @@ async function startServer() {
       }
     }
 
-    const finalImages =
-      processedImages.length > 0
-        ? processedImages
-        : [sampleGems[Math.floor(Math.random() * sampleGems.length)]];
+    if (processedImages.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Foto batu permata wajib diupload dari media perangkat (galeri atau kamera), bukan dari URL.",
+      });
+    }
 
+    const now = Date.now();
     const newCatalog: CatalogItem = {
-      id: `cat-${Date.now()}`,
+      id: `cat-${now}`,
       userId: user.id,
       username: user.username,
       userAvatar: user.avatar,
@@ -1272,12 +1283,14 @@ async function startServer() {
       price: price.trim(),
       description: description ? description.trim() : "",
       videoUrl: cleanVideoUrl,
-      images: finalImages,
-      status: "koleksi", // default masuk koleksi profile dulu
-      isPublished: false,
+      images: processedImages,
+      status: "dijual",
+      isPublished: true,
+      publishedAt: now,
+      bumpedAt: now,
       comments: [],
       likes: [],
-      createdAt: "Hari ini",
+      createdAt: "Baru saja",
     };
 
     catalogs.unshift(newCatalog);
@@ -1286,11 +1299,11 @@ async function startServer() {
       console.warn(`[Turso DB] Failed saving new catalog ${newCatalog.id}:`, e)
     );
 
-    console.log(`[CATALOG] New item saved to profile for ${user.username}: ${newCatalog.gemType}`);
+    console.log(`[CATALOG] New item published directly for ${user.username}: ${newCatalog.gemType}`);
 
     return res.status(201).json({
       success: true,
-      message: `Katalog "${newCatalog.gemType}" berhasil disimpan ke profil Anda!`,
+      message: `Katalog "${newCatalog.gemType}" berhasil disimpan dan langsung terpublish di Beranda Komunitas!`,
       catalog: newCatalog,
     });
   });
@@ -2053,11 +2066,61 @@ async function startServer() {
     }
 
     // Cek apakah room untuk transaksi ini sudah pernah dibuat sebelumnya
-    const existingRoom = transactionRooms.find(
+    let existingRoom = transactionRooms.find(
       (r) => r.catalogId === catalogId && r.offerId === offerId
     );
 
+    const {
+      facePhotoUrl,
+      latitude,
+      longitude,
+      accuracyMeters,
+      locationName,
+      verifiedRole,
+    } = req.body;
+
+    const now = Date.now();
+
     if (existingRoom) {
+      // Jika ada data verifikasi yang dikirimkan saat membuka atau bergabung ke room
+      if (facePhotoUrl && latitude !== undefined && longitude !== undefined) {
+        const isBuyerVerify = verifiedRole === "buyer" || buyerId === existingRoom.buyer.userId;
+        const targetParty = isBuyerVerify ? existingRoom.buyer : existingRoom.seller;
+        targetParty.faceId = {
+          verified: true,
+          facePhotoUrl: String(facePhotoUrl).trim(),
+          verifiedAt: now,
+        };
+        targetParty.gps = {
+          verified: true,
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          accuracyMeters: Number(accuracyMeters) || 10,
+          locationName: String(locationName || "Lokasi Presisi Terverifikasi").trim(),
+          verifiedAt: now,
+        };
+        targetParty.isFullyVerified = true;
+
+        if (existingRoom.seller.isFullyVerified && existingRoom.buyer.isFullyVerified) {
+          existingRoom.status = "active";
+          existingRoom.messages.push({
+            id: `msg-verified-${Date.now()}`,
+            senderId: "system",
+            senderName: "Sistem Keamanan Komunitas",
+            senderAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=150&q=80",
+            content: `🔒 KEDUA BELAH PIHAK LENGKAP TERVERIFIKASI! Penjual (@${existingRoom.seller.username}) dan Pembeli (@${existingRoom.buyer.username}) telah berhasil mengaktifkan Face ID yang jelas dan GPS yang akurat. Ruang obrolan transaksi resmi dibuka!`,
+            createdAt: "Baru saja",
+            timestamp: Date.now(),
+          });
+        }
+        existingRoom.lastActivityAt = now;
+        existingRoom.expiresAt = now + SEVEN_DAYS_MS;
+        saveDatabase();
+        saveTransactionRoomToTurso(existingRoom).catch((e) =>
+          console.warn(`[Turso DB] Failed saving room ${existingRoom!.id}:`, e)
+        );
+      }
+
       return res.json({
         success: true,
         room: existingRoom,
@@ -2071,6 +2134,9 @@ async function startServer() {
     const finalBuyerId = buyerId || offer.buyerId;
     const buyerUser = users.find((u) => u.id === finalBuyerId);
     const agreedPrice = offer.acceptedPrice || offer.counterPrice || offer.offerPrice;
+
+    const buyerVerified =
+      Boolean(facePhotoUrl) && latitude !== undefined && longitude !== undefined;
 
     const newRoom: TransactionRoom = {
       id: `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -2093,7 +2159,24 @@ async function startServer() {
         username: buyerUser ? buyerUser.username : offer.buyerName,
         userAvatar: buyerUser ? buyerUser.avatar : offer.buyerAvatar,
         userPhone: buyerUser ? buyerUser.phone : offer.buyerPhone,
-        isFullyVerified: false,
+        faceId: buyerVerified
+          ? {
+              verified: true,
+              facePhotoUrl: String(facePhotoUrl).trim(),
+              verifiedAt: now,
+            }
+          : undefined,
+        gps: buyerVerified
+          ? {
+              verified: true,
+              latitude: Number(latitude),
+              longitude: Number(longitude),
+              accuracyMeters: Number(accuracyMeters) || 10,
+              locationName: String(locationName || "Lokasi Presisi Terverifikasi").trim(),
+              verifiedAt: now,
+            }
+          : undefined,
+        isFullyVerified: buyerVerified,
       },
       status: "pending_verification",
       createdAt: Date.now(),
@@ -2112,11 +2195,39 @@ async function startServer() {
       ],
     };
 
+    if (buyerVerified) {
+      newRoom.messages.push({
+        id: `msg-buyer-verified-${Date.now()}`,
+        senderId: "system",
+        senderName: "Sistem Keamanan Komunitas",
+        senderAvatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=150&q=80",
+        content: `Pembeli (@${newRoom.buyer.username}) telah berhasil mengaktifkan Face ID & GPS akurat saat pengajuan room. Menunggu Penjual (@${newRoom.seller.username}) menyetujui dan mengaktifkan Face ID & GPS akurat agar obrolan dimulai.`,
+        createdAt: "Baru saja",
+        timestamp: Date.now(),
+      });
+    }
+
     transactionRooms.unshift(newRoom);
     saveDatabase();
     saveTransactionRoomToTurso(newRoom).catch((e) =>
       console.warn(`[Turso DB] Failed saving room ${newRoom.id}:`, e)
     );
+
+    // Kirim notifikasi ajakan room ke penjual
+    addAppNotification({
+      recipientId: catalog.userId,
+      actorId: finalBuyerId,
+      actorName: buyerUser ? buyerUser.username : offer.buyerName,
+      actorAvatar: buyerUser ? buyerUser.avatar : offer.buyerAvatar,
+      type: "room_invitation",
+      title: "Ajakan Room Transaksi",
+      message: `${buyerUser ? buyerUser.username : offer.buyerName} telah mengaktifkan Face ID & GPS akurat dan mengajak Anda ke Room Transaksi untuk "${catalog.gemType}". Silakan aktifkan kamera Face ID & GPS akurat untuk menyetujui.`,
+      catalogId: catalog.id,
+      gemType: catalog.gemType,
+      catalogImage: catalog.images?.[0] || "",
+      offerId: offer.id,
+      roomId: newRoom.id,
+    }).catch((e) => console.warn("Failed sending room invitation notif:", e));
 
     console.log(
       `[ROOM CEKOUT] Room transaksi baru ${newRoom.id} dibuat untuk ${newRoom.gemType} (Penjual: ${newRoom.seller.username}, Pembeli: ${newRoom.buyer.username}, Harga: ${agreedPrice})`
@@ -2177,6 +2288,39 @@ async function startServer() {
       return res.status(400).json({
         success: false,
         message: "Akses lokasi GPS yang akurat wajib diaktifkan demi keamanan transaksi.",
+      });
+    }
+
+    const numLat = Number(latitude);
+    const numLng = Number(longitude);
+    const numAccuracy = Number(accuracyMeters);
+
+    // Validasi Anti-Fake GPS di sisi server
+    if (isNaN(numLat) || isNaN(numLng) || numLat < -90 || numLat > 90 || numLng < -180 || numLng > 180) {
+      return res.status(400).json({
+        success: false,
+        message: "⚠️ Koordinat GPS tidak valid. Harap gunakan perangkat dengan sensor GPS asli.",
+      });
+    }
+
+    if (Math.abs(numLat) < 0.0001 && Math.abs(numLng) < 0.0001) {
+      return res.status(400).json({
+        success: false,
+        message: "⚠️ Lokasi GPS tidak valid (terdeteksi simulator / fake GPS). Harap gunakan GPS riil.",
+      });
+    }
+
+    if (numAccuracy <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "⚠️ Presisi GPS tidak valid (terindikasi lokasi virtual / fake GPS). Harap gunakan sinyal GPS asli.",
+      });
+    }
+
+    if (numAccuracy > 150) {
+      return res.status(400).json({
+        success: false,
+        message: `⚠️ Akurasi GPS Anda kurang presisi (±${numAccuracy}m). Mohon aktifkan GPS akurasi tinggi dan hindari fake GPS.`,
       });
     }
 
@@ -2244,6 +2388,24 @@ async function startServer() {
         createdAt: "Baru saja",
         timestamp: Date.now(),
       });
+
+      // Beritahu pembeli bahwa penjual telah menyetujui dan mengaktifkan Face ID & GPS
+      const targetNotifyId = isSeller ? room.buyer.userId : room.seller.userId;
+      const targetActor = isSeller ? room.seller : room.buyer;
+      addAppNotification({
+        recipientId: targetNotifyId,
+        actorId: targetActor.userId,
+        actorName: targetActor.username,
+        actorAvatar: targetActor.userAvatar || "",
+        type: "room_accepted",
+        title: "Room Transaksi Resmi Terbuka!",
+        message: `${targetActor.username} telah mengaktifkan Face ID & GPS akurat. Ruang obrolan transaksi resmi dibuka, silakan masuk!`,
+        catalogId: room.catalogId,
+        gemType: room.gemType,
+        catalogImage: room.gemImage,
+        offerId: room.offerId,
+        roomId: room.id,
+      }).catch((e) => console.warn("Failed sending room_accepted notification:", e));
     }
 
     room.lastActivityAt = now;

@@ -8,6 +8,7 @@ import {
   HandCoins,
   ArrowLeftRight,
   ShieldCheck,
+  ShieldAlert,
   ExternalLink,
   Gem,
 } from "lucide-react";
@@ -21,6 +22,7 @@ interface Props {
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
   onNavigateToTarget: (notif: AppNotification) => void;
+  onOpenRoom?: (roomId: string, catalogId?: string, offerId?: string) => void;
 }
 
 export const NotificationModal: React.FC<Props> = ({
@@ -31,6 +33,7 @@ export const NotificationModal: React.FC<Props> = ({
   onMarkAsRead,
   onMarkAllAsRead,
   onNavigateToTarget,
+  onOpenRoom,
 }) => {
   if (!isOpen) return null;
 
@@ -53,6 +56,10 @@ export const NotificationModal: React.FC<Props> = ({
         return <ArrowLeftRight className="w-3.5 h-3.5 text-sky-400" />;
       case "offer_accepted":
         return <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />;
+      case "room_invitation":
+        return <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />;
+      case "room_accepted":
+        return <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />;
       case "comment_reply":
         return <CornerDownRight className="w-3.5 h-3.5 text-teal-400" />;
       case "comment":
@@ -69,6 +76,10 @@ export const NotificationModal: React.FC<Props> = ({
         return "bg-sky-500/10 text-sky-300 border-sky-500/30";
       case "offer_accepted":
         return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
+      case "room_invitation":
+        return "bg-amber-500/15 text-amber-300 border-amber-500/40 animate-pulse";
+      case "room_accepted":
+        return "bg-emerald-500/15 text-emerald-300 border-emerald-500/40";
       case "comment_reply":
         return "bg-teal-500/10 text-teal-300 border-teal-500/30";
       case "comment":
@@ -204,6 +215,38 @@ export const NotificationModal: React.FC<Props> = ({
                     <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
                       {notif.message}
                     </p>
+
+                    {/* Tombol aksi cepat untuk ajakan room */}
+                    {(notif.type === "room_invitation" || notif.type === "room_accepted") && onOpenRoom && (
+                      <div className="mt-2.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!notif.isRead) {
+                              onMarkAsRead(notif.id);
+                            }
+                            if (notif.roomId) {
+                              onOpenRoom(notif.roomId, notif.catalogId, notif.offerId);
+                            } else {
+                              onNavigateToTarget(notif);
+                            }
+                          }}
+                          className={`w-full py-1.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all ${
+                            notif.type === "room_invitation"
+                              ? "bg-amber-500 hover:bg-amber-400 text-slate-950"
+                              : "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                          }`}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>
+                            {notif.type === "room_invitation"
+                              ? "Verifikasi Wajah & GPS Untuk Menyetujui Room"
+                              : "Masuk ke Room Transaksi"}
+                          </span>
+                        </button>
+                      </div>
+                    )}
 
                     {/* Target Gemstone Reference */}
                     <div className="mt-2 flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[11px] text-slate-400">

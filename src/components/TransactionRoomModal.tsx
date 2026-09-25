@@ -28,6 +28,13 @@ interface Props {
   catalogId?: string;
   offerId?: string;
   currentUser: User;
+  initialVerification?: {
+    facePhotoUrl: string;
+    latitude: number;
+    longitude: number;
+    accuracyMeters: number;
+    locationName: string;
+  };
   onOpenFullscreen?: (data: {
     imageUrl: string;
     title?: string;
@@ -44,6 +51,7 @@ export const TransactionRoomModal: React.FC<Props> = ({
   catalogId,
   offerId,
   currentUser,
+  initialVerification,
   onOpenFullscreen,
 }) => {
   const [room, setRoom] = useState<TransactionRoom | null>(null);
@@ -83,6 +91,25 @@ export const TransactionRoomModal: React.FC<Props> = ({
   const loadRoomData = async () => {
     try {
       if (initialRoomId) {
+        if (initialVerification) {
+          try {
+            await fetch(`/api/rooms/${initialRoomId}/verify`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: currentUser.id,
+                facePhotoUrl: initialVerification.facePhotoUrl,
+                latitude: initialVerification.latitude,
+                longitude: initialVerification.longitude,
+                accuracyMeters: initialVerification.accuracyMeters,
+                locationName: initialVerification.locationName,
+              }),
+            });
+          } catch (verErr) {
+            console.warn("Initial verify error:", verErr);
+          }
+        }
+
         const res = await fetch(`/api/rooms/${initialRoomId}?userId=${currentUser.id}`);
         const data = await res.json();
         if (!res.ok || !data.success) {
@@ -90,14 +117,25 @@ export const TransactionRoomModal: React.FC<Props> = ({
         }
         setRoom(data.room);
       } else if (catalogId && offerId) {
+        const bodyPayload: any = {
+          catalogId,
+          offerId,
+          buyerId: currentUser.id,
+        };
+
+        if (initialVerification) {
+          bodyPayload.facePhotoUrl = initialVerification.facePhotoUrl;
+          bodyPayload.latitude = initialVerification.latitude;
+          bodyPayload.longitude = initialVerification.longitude;
+          bodyPayload.accuracyMeters = initialVerification.accuracyMeters;
+          bodyPayload.locationName = initialVerification.locationName;
+          bodyPayload.verifiedRole = "buyer";
+        }
+
         const res = await fetch("/api/rooms/create-or-get", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            catalogId,
-            offerId,
-            buyerId: currentUser.id,
-          }),
+          body: JSON.stringify(bodyPayload),
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
@@ -242,9 +280,52 @@ export const TransactionRoomModal: React.FC<Props> = ({
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        // Anti-Fake GPS Detection
+        const coords: any = pos.coords;
+        const isMocked =
+          coords.isMocked === true ||
+          (pos as any).isMock === true ||
+          (coords.mocked === true);
+
+        if (isMocked) {
+          setGpsStatus("error");
+          setGpsError(
+            "⚠️ Peringatan Keamanan: Terdeteksi penggunaan Fake GPS / Mock Location! Matikan aplikasi Fake GPS untuk melanjutkan verifikasi transaksi demi keamanan kedua belah pihak."
+          );
+          return;
+        }
+
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         const accuracy = Math.round(pos.coords.accuracy || 15);
+
+        if (accuracy <= 0) {
+          setGpsStatus("error");
+          setGpsError(
+            "⚠️ Presisi GPS tidak valid (terindikasi lokasi virtual / fake GPS). Harap gunakan sinyal GPS asli dari perangkat Anda."
+          );
+          return;
+        }
+
+        if (accuracy > 150) {
+          setGpsStatus("error");
+          setGpsError(
+            `⚠️ Akurasi GPS Anda kurang presisi (±${accuracy}m). Demi keamanan transaksi, mohon aktifkan mode Lokasi Akurasi Tinggi (High Accuracy GPS) dan hindari lokasi palsu.`
+          );
+          return;
+        }
+
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          setGpsStatus("error");
+          setGpsError("⚠️ Koordinat GPS tidak valid. Harap gunakan perangkat dengan sensor GPS asli.");
+          return;
+        }
+
+        if (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001) {
+          setGpsStatus("error");
+          setGpsError("⚠️ Koordinat GPS tidak valid (terindikasi emulator/fake GPS). Harap gunakan GPS riil.");
+          return;
+        }
 
         let locName = `Koordinat: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
         try {
@@ -561,9 +642,9 @@ export const TransactionRoomModal: React.FC<Props> = ({
               </div>
 
               {/* Teks Wajib Sesuai Permintaan Persis */}
-              <h2 className="text-base sm:text-lg lg:text-xl font-black text-white tracking-wide leading-snug">
-                DEMI KEAMANAN TRANSAKSI MAKA KEDUA BELAH PIHAK WAJIB MENGENALI WAJAH DAN LOKASI YANG JELAS.
-              </h2>
+              <div className="bg-amber-950/60 border-2 border-amber-500/80 p-4 rounded-2xl text-xs sm:text-sm text-amber-200 font-black leading-relaxed shadow-lg">
+                UNTUK KEAMANAN DALAM BERTRANSAKSI, PIHAK PENJUAL DAN PEMBELI WAJIB MEMVERIFIKASI WAJAH DAN LOKASI SECARA AKURAT. DATA TERSEBUT AKAN DIKIRIMKAN KE CHATT ROOM. JIKA SALAH SATU TIDAK MENGAKTIFKAN FACE ID DAN GPS AKURAT MAKA ROOM TIDAK AKAN TERBENTUK.
+              </div>
 
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
                 Untuk mencegah penipuan batu mulia dan menjaga keaslian transaksi bernilai tinggi, sistem komunitas mewajibkan:

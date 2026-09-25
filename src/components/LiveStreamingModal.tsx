@@ -18,6 +18,8 @@ import {
   MessageCircle,
   AlertCircle,
   CheckCircle,
+  SwitchCamera,
+  RefreshCw,
 } from "lucide-react";
 import { User, LiveStreamSummary, LiveStreamComment, LivePinnedProduct, CatalogItem } from "../types";
 
@@ -70,6 +72,8 @@ export const LiveStreamingModal: React.FC<Props> = ({
   // Hardware Media States
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isMicOn, setIsMicOn] = useState(true);
+  const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("user");
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   // Select Pin modal for host
@@ -87,25 +91,58 @@ export const LiveStreamingModal: React.FC<Props> = ({
     commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [comments]);
 
-  // Turn on local camera for host
-  const startCamera = async () => {
+  // Turn on local camera for host with selectable facingMode
+  const startCamera = async (targetFacing: "user" | "environment" = cameraFacingMode) => {
     try {
       setCameraError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-        audio: true,
-      });
+      // Stop old tracks first
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: { ideal: targetFacing },
+          },
+          audio: isMicOn,
+        });
+      } catch (modeErr) {
+        // Fallback to basic video constraint if exact facingMode fails
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: isMicOn,
+        });
+      }
+
       mediaStreamRef.current = stream;
-      if (videoRef.current) {
+      if (videoRef.current && stream) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
       }
       setIsCameraOn(true);
-      setIsMicOn(true);
+      setCameraFacingMode(targetFacing);
     } catch (err: any) {
       console.warn("Camera access warning:", err);
       setCameraError(
         "Kamera/Mikrofon belum diizinkan atau tidak tersedia. Menjalankan simulasi siaran visual interaktif."
       );
+    }
+  };
+
+  // Switch between front (user) and back (environment) camera
+  const handleSwitchCamera = async () => {
+    if (isSwitchingCamera) return;
+    setIsSwitchingCamera(true);
+    const nextFacing: "user" | "environment" = cameraFacingMode === "user" ? "environment" : "user";
+    try {
+      await startCamera(nextFacing);
+    } finally {
+      setIsSwitchingCamera(false);
     }
   };
 
@@ -580,7 +617,9 @@ export const LiveStreamingModal: React.FC<Props> = ({
                 autoPlay
                 playsInline
                 muted={isHost} // Mute self to prevent feedback loop
-                className={`w-full h-full object-cover ${!isCameraOn ? "hidden" : ""}`}
+                className={`w-full h-full object-cover ${!isCameraOn ? "hidden" : ""} ${
+                  cameraFacingMode === "user" ? "transform -scale-x-100" : ""
+                }`}
               />
 
               {/* Visual Fallback / Animation when camera is loading or viewer mode */}
@@ -625,6 +664,20 @@ export const LiveStreamingModal: React.FC<Props> = ({
                     title={isCameraOn ? "Matikan Kamera" : "Nyalakan Kamera"}
                   >
                     {isCameraOn ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSwitchCamera}
+                    disabled={!isCameraOn || isSwitchingCamera}
+                    className={`p-2.5 rounded-xl transition-all cursor-pointer ${
+                      isSwitchingCamera
+                        ? "bg-amber-600 text-white animate-pulse"
+                        : "bg-slate-800 text-teal-300 hover:bg-slate-700 hover:text-white"
+                    } disabled:opacity-50`}
+                    title={`Pindah ke kamera ${cameraFacingMode === "user" ? "belakang (objek batu)" : "depan (wajah)"}`}
+                  >
+                    <SwitchCamera className={`w-4 h-4 ${isSwitchingCamera ? "animate-spin" : ""}`} />
                   </button>
 
                   <button

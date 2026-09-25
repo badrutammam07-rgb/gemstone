@@ -19,6 +19,10 @@ import {
   parseRupiahNumber,
   rupiahToTerbilang,
 } from "../utils/currencyUtils";
+import {
+  TransactionSecurityVerificationModal,
+  VerificationResult,
+} from "./TransactionSecurityVerificationModal";
 
 interface Props {
   isOpen: boolean;
@@ -26,7 +30,11 @@ interface Props {
   catalog: CatalogItem;
   sellerId: string;
   onRespondOffer: (updatedCatalog: CatalogItem) => void;
-  onOpenRoom?: (catalogId: string, offerId: string) => void;
+  onOpenRoom?: (
+    catalogId: string,
+    offerId: string,
+    verificationData?: VerificationResult
+  ) => void;
   onSelectUser?: (userId: string) => void;
 }
 
@@ -43,6 +51,9 @@ export const SellerOffersModal: React.FC<Props> = ({
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // State untuk verifikasi keamanan Face ID & GPS bagi penjual
+  const [pendingAcceptOffer, setPendingAcceptOffer] = useState<NegotiationOffer | null>(null);
+
   // State untuk form input Harga Banding Manual
   const [activeCounterOfferId, setActiveCounterOfferId] = useState<string | null>(null);
   const [counterPriceInput, setCounterPriceInput] = useState<string>("");
@@ -53,14 +64,17 @@ export const SellerOffersModal: React.FC<Props> = ({
 
   const offers = catalog.offers || [];
 
-  // 1. Penjual Menyepakati Tawaran Pembeli
-  const handleAcceptOffer = async (offerId: string) => {
-    setRespondingOfferId(offerId);
+  // 1. Penjual Menyepakati Tawaran Pembeli setelah Verifikasi Wajah & GPS selesai
+  const handleFinalizeAcceptWithVerification = async (
+    offer: NegotiationOffer,
+    verification: VerificationResult
+  ) => {
+    setRespondingOfferId(offer.id);
     setErrorMessage(null);
     setActionNotice(null);
 
     try {
-      const res = await fetch(`/api/catalog/${catalog.id}/offer/${offerId}/respond`, {
+      const res = await fetch(`/api/catalog/${catalog.id}/offer/${offer.id}/respond`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sellerId, status: "accepted" }),
@@ -73,11 +87,23 @@ export const SellerOffersModal: React.FC<Props> = ({
 
       setActionNotice(data.message);
       onRespondOffer(data.catalog);
+
+      // Otomatis daftarkan / buka room dengan data verifikasi penjual
+      if (onOpenRoom) {
+        onOpenRoom(catalog.id, offer.id, verification);
+        onClose();
+      }
     } catch (err: any) {
       setErrorMessage(err.message || "Terjadi kesalahan saat memproses penawaran.");
     } finally {
       setRespondingOfferId(null);
+      setPendingAcceptOffer(null);
     }
+  };
+
+  // Tombol Sepakat diklik -> Buka Modal Verifikasi Kamera Face ID & GPS Akurat
+  const handleInitiateAccept = (offer: NegotiationOffer) => {
+    setPendingAcceptOffer(offer);
   };
 
   // Buka formulir input harga banding
@@ -354,7 +380,7 @@ export const SellerOffersModal: React.FC<Props> = ({
                             {/* Tombol Sepakat / Terima */}
                             <button
                               type="button"
-                              onClick={() => handleAcceptOffer(offer.id)}
+                              onClick={() => handleInitiateAccept(offer)}
                               disabled={isResponding || isSubmittingCounter}
                               className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1 shadow-sm cursor-pointer disabled:opacity-50"
                               title="Sepakati / terima tawaran harga ini"
@@ -494,6 +520,22 @@ export const SellerOffersModal: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {/* MODAL VERIFIKASI WAJIB FACE ID & GPS SEBELUM MENYETUJUI PENAWARAN */}
+      {pendingAcceptOffer && (
+        <TransactionSecurityVerificationModal
+          isOpen={Boolean(pendingAcceptOffer)}
+          role="seller"
+          gemType={catalog.gemType}
+          agreedPrice={pendingAcceptOffer.counterPrice || pendingAcceptOffer.offerPrice}
+          counterPartyName={pendingAcceptOffer.buyerName}
+          title="Verifikasi Persetujuan Room Transaksi"
+          onClose={() => setPendingAcceptOffer(null)}
+          onVerified={async (verificationResult) => {
+            await handleFinalizeAcceptWithVerification(pendingAcceptOffer, verificationResult);
+          }}
+        />
+      )}
     </div>
   );
 };

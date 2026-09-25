@@ -18,6 +18,10 @@ import {
   parseRupiahNumber,
   rupiahToTerbilang,
 } from "../utils/currencyUtils";
+import {
+  TransactionSecurityVerificationModal,
+  VerificationResult,
+} from "./TransactionSecurityVerificationModal";
 
 interface Props {
   isOpen: boolean;
@@ -25,7 +29,11 @@ interface Props {
   catalog: CatalogItem;
   currentUser: User;
   onOfferSuccess: (updatedCatalog: CatalogItem, offer: NegotiationOffer) => void;
-  onCheckout?: (catalogId: string, offerId: string) => void;
+  onCheckout?: (
+    catalogId: string,
+    offerId: string,
+    verificationData?: VerificationResult
+  ) => void;
   onSelectUser?: (userId: string) => void;
 }
 
@@ -44,6 +52,7 @@ export const NegotiateModal: React.FC<Props> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
 
   // Cek apakah pembeli sudah pernah menawar sebelumnya
   const existingOffer = catalog.offers?.find((o) => o.buyerId === currentUser.id);
@@ -338,8 +347,7 @@ export const NegotiateModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        onCheckout(catalog.id, existingOffer.id);
-                        onClose();
+                        setIsSecurityModalOpen(true);
                       }}
                       className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm py-3 rounded-xl transition-all shadow-lg shadow-emerald-900/50 flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01]"
                     >
@@ -506,6 +514,26 @@ export const NegotiateModal: React.FC<Props> = ({
           </form>
         </div>
       </div>
+
+      {/* MODAL VERIFIKASI WAJIB FACE ID & GPS SEBELUM MEMBUAT ROOM */}
+      {isSecurityModalOpen && existingOffer && (
+        <TransactionSecurityVerificationModal
+          isOpen={isSecurityModalOpen}
+          role="buyer"
+          gemType={catalog.gemType}
+          agreedPrice={existingOffer.acceptedPrice || existingOffer.counterPrice || existingOffer.offerPrice}
+          counterPartyName={catalog.username}
+          title="Pengajuan Buat Room Transaksi"
+          onClose={() => setIsSecurityModalOpen(false)}
+          onVerified={async (verificationResult) => {
+            setIsSecurityModalOpen(false);
+            if (onCheckout) {
+              onCheckout(catalog.id, existingOffer.id, verificationResult);
+            }
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 };

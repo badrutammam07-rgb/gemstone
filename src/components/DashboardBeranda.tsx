@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Gem,
   ArrowUpCircle,
@@ -47,7 +47,12 @@ interface Props {
     price?: string;
     sellerName?: string;
   }) => void;
-  onOpenTransactionRoom?: (data: { catalogId?: string; offerId?: string; roomId?: string }) => void;
+  onOpenTransactionRoom?: (data: {
+    catalogId?: string;
+    offerId?: string;
+    roomId?: string;
+    verificationData?: any;
+  }) => void;
   highlightTarget?: { catalogId: string; offerId?: string; commentId?: string; type?: string } | null;
   onClearHighlightTarget?: () => void;
   onOpenLiveStream?: (streamId?: string) => void;
@@ -171,6 +176,34 @@ export const DashboardBeranda: React.FC<Props> = ({
       setIsLoading(false);
     }
   };
+
+  // Urutan Tampil Live Streaming di Bagian Atas Beranda:
+  // 1. Akun yang diikuti oleh pengguna saat ini (Prioritas Utama)
+  // 2. Akun live milik pengguna sendiri jika sedang streaming
+  // 3. Selebihnya acak (randomized) semua akun yang tidak diikuti namun sedang aktif live
+  const sortedLiveStreams = useMemo(() => {
+    if (!activeStreams || activeStreams.length === 0) return [];
+
+    const followingSet = new Set(currentUser.following || []);
+    const ownStreams: LiveStreamSummary[] = [];
+    const followedStreams: LiveStreamSummary[] = [];
+    const otherStreams: LiveStreamSummary[] = [];
+
+    activeStreams.forEach((stream) => {
+      if (stream.hostId === currentUser.id) {
+        ownStreams.push(stream);
+      } else if (followingSet.has(stream.hostId)) {
+        followedStreams.push(stream);
+      } else {
+        otherStreams.push(stream);
+      }
+    });
+
+    // Acak (randomize) semua akun yang tidak diikuti
+    const randomizedOthers = [...otherStreams].sort(() => Math.random() - 0.5);
+
+    return [...ownStreams, ...followedStreams, ...randomizedOthers];
+  }, [activeStreams, currentUser.following, currentUser.id]);
 
   // Sundul from Beranda if user owns the post
   const handleBump = async (catalogId: string, gemType: string) => {
@@ -308,7 +341,7 @@ export const DashboardBeranda: React.FC<Props> = ({
       )}
 
       {/* Dashboard Beranda Subtitle & Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-800">
+      <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
             <span>Dashboard Beranda Komunitas</span>
@@ -318,112 +351,191 @@ export const DashboardBeranda: React.FC<Props> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {onStartLiveHost && (
-            <button
-              type="button"
-              onClick={onStartLiveHost}
-              className="bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-rose-900/40 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 border border-rose-400/40"
-              title="Mulai Sesi Live Streaming Jualan Batu Mulia"
-            >
-              <Radio className="w-3.5 h-3.5 animate-pulse text-white" />
-              <span>Mulai Live Jual</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              fetchFeed();
-              fetchLiveStreams();
-            }}
-            className="text-slate-400 hover:text-emerald-400 p-2 rounded-xl bg-slate-900 border border-slate-800 transition-colors"
-            title="Segarkan Beranda & Live"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={fetchFeed}
+          className="text-slate-400 hover:text-emerald-400 p-2 rounded-xl bg-slate-900 border border-slate-800 transition-colors"
+          title="Segarkan Beranda"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Active Live Streams Section (Volatile In-Memory Only) */}
-      {activeStreams.length > 0 && (
-        <div className="mb-8 bg-gradient-to-r from-rose-950/40 via-slate-900 to-amber-950/30 border border-rose-500/30 rounded-3xl p-4 sm:p-5 shadow-2xl">
-          <div className="flex items-center justify-between mb-3.5">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+      {/* 🔴 Bagian Atas Beranda: Akun yang Sedang Live Streaming Jual Batu */}
+      <section className="mb-8 bg-gradient-to-r from-red-950/40 via-slate-900 to-slate-900 border border-red-900/40 rounded-3xl p-4 sm:p-5 shadow-2xl relative overflow-hidden">
+        {/* Glow ambient background effect */}
+        <div className="absolute -top-12 -left-12 w-48 h-48 bg-red-600/10 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-rose-600/10 rounded-full blur-2xl pointer-events-none" />
+
+        <div className="relative z-10">
+          {/* Header Live Section */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/80">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500" />
               </span>
-              <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1.5">
-                <span>Siaran Live Berlangsung</span>
-                <span className="bg-rose-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {activeStreams.length} Sedang Live
-                </span>
-              </h3>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base sm:text-lg font-black text-white tracking-tight flex items-center gap-1.5">
+                    <Radio className="w-5 h-5 text-red-500" />
+                    <span>LIVE STREAMING JUAL BATU</span>
+                  </h3>
+                  {activeStreams.length > 0 && (
+                    <span className="bg-red-500/20 text-red-300 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border border-red-500/40 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                      {activeStreams.length} Siaran Langsung
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Prioritas akun yang Anda ikuti • Tonton langsung kilau batu permata & tawar secara interaktif
+                </p>
+              </div>
             </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">
-              Tonton langsung, beri komentar & lihat jumlah penonton aktif
-            </p>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onStartLiveHost}
+                className="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-red-950/50 flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Mulai live streaming jual batu mulia Anda"
+              >
+                <Video className="w-4 h-4" />
+                <span>+ Mulai Live Jual Batu</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {activeStreams.map((stream) => (
-              <div
-                key={stream.id}
-                onClick={() => onOpenLiveStream && onOpenLiveStream(stream.id)}
-                className="group relative bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-rose-500/50 rounded-2xl p-3 cursor-pointer transition-all duration-200 shadow-md hover:shadow-rose-950/40"
-              >
-                <div className="flex items-center gap-3 mb-2.5">
-                  <div className="relative">
-                    <img
-                      src={stream.hostAvatar}
-                      alt={stream.hostName}
-                      className="w-10 h-10 rounded-full object-cover border-2 border-rose-500"
-                    />
-                    <span className="absolute -bottom-1 -right-1 bg-rose-600 text-white text-[8px] font-black uppercase px-1 rounded-full">
-                      Live
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-white truncate group-hover:text-rose-300 transition-colors">
-                      {stream.hostName}
-                    </p>
-                    <p className="text-[11px] text-slate-400 truncate">{stream.title}</p>
-                  </div>
-                </div>
+          {/* List of Active Live Streams with Responsive Scroll Mode */}
+          {sortedLiveStreams.length > 0 ? (
+            <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5 overflow-x-auto sm:overflow-visible pb-2 sm:pb-0 scrollbar-none snap-x touch-scroll">
+              {sortedLiveStreams.map((stream) => {
+                const isFollowed = (currentUser.following || []).includes(stream.hostId);
+                const isOwnLive = stream.hostId === currentUser.id;
 
-                {stream.pinnedProduct ? (
-                  <div className="flex items-center gap-2 bg-slate-900/90 rounded-xl p-2 border border-slate-800/80 mb-2">
-                    <img
-                      src={stream.pinnedProduct.photoUrl}
-                      alt={stream.pinnedProduct.title}
-                      className="w-8 h-8 rounded-lg object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-semibold text-slate-300 truncate">
-                        {stream.pinnedProduct.title}
-                      </p>
-                      <p className="text-[11px] font-extrabold text-amber-400">
-                        {stream.pinnedProduct.price}
+                return (
+                  <div
+                    key={stream.id}
+                    onClick={() => onOpenLiveStream?.(stream.id)}
+                    className="group bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-red-500/50 rounded-2xl p-3.5 cursor-pointer transition-all shadow-md hover:shadow-red-950/30 flex flex-col justify-between relative overflow-hidden min-w-[270px] sm:min-w-0 snap-start shrink-0 sm:shrink"
+                  >
+                    {/* Top Row: Host Avatar with pulsing Live ring & Status Badges */}
+                    <div className="flex items-start gap-3">
+                      <div className="relative shrink-0">
+                        {/* Glowing Live Ring */}
+                        <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-red-600 via-rose-500 to-amber-500 animate-pulse blur-[1px]" />
+                        <img
+                          src={stream.hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80"}
+                          alt={stream.hostName}
+                          referrerPolicy="no-referrer"
+                          className="relative w-12 h-12 rounded-full object-cover border-2 border-slate-950"
+                        />
+                        <span className="absolute -bottom-1 -right-1 bg-red-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full border border-slate-950 uppercase tracking-wider">
+                          LIVE
+                        </span>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-sm text-white group-hover:text-red-300 transition-colors truncate">
+                            {stream.hostName}
+                          </span>
+                          {isOwnLive ? (
+                            <span className="bg-purple-950 text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-purple-800">
+                              Live Anda
+                            </span>
+                          ) : isFollowed ? (
+                            <span className="bg-emerald-950 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-800 flex items-center gap-0.5">
+                              <BadgeCheck className="w-3 h-3 text-emerald-400" />
+                              Diikuti
+                            </span>
+                          ) : (
+                            <span className="bg-slate-800 text-slate-300 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-slate-700">
+                              Eksplor
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Viewer count */}
+                        <div className="flex items-center gap-1 text-[11px] text-red-400 mt-1 font-semibold">
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{stream.viewerCount || 1} penonton</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stream Title */}
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold text-slate-200 line-clamp-1 group-hover:text-white">
+                        {stream.title || "Live Jual Beli Batu Mulia"}
                       </p>
                     </div>
-                  </div>
-                ) : null}
 
-                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/60">
-                  <div className="flex items-center gap-1 text-slate-400 font-semibold">
-                    <Eye className="w-3.5 h-3.5 text-rose-400" />
-                    <span>{stream.viewerCount} Penonton</span>
+                    {/* Pinned Product Preview (if any) */}
+                    {stream.pinnedProduct && (
+                      <div className="mt-2.5 p-2 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center gap-2">
+                        {stream.pinnedProduct.photoUrl && (
+                          <img
+                            src={stream.pinnedProduct.photoUrl}
+                            alt={stream.pinnedProduct.title}
+                            className="w-8 h-8 rounded-lg object-cover border border-slate-700 shrink-0"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[11px] font-bold text-amber-300 truncate block">
+                            {stream.pinnedProduct.title}
+                          </span>
+                          <span className="text-[10px] text-emerald-400 font-mono font-bold block">
+                            {formatToRupiah(stream.pinnedProduct.price)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Button */}
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 group-hover:text-slate-300">
+                        Klik untuk menonton live
+                      </span>
+                      <span className="bg-red-600 group-hover:bg-red-500 text-white font-bold text-[11px] px-3 py-1 rounded-lg flex items-center gap-1 transition-colors">
+                        <Play className="w-3 h-3 fill-white" />
+                        Tonton
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-emerald-400 font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
-                    Tonton &gt;
-                  </span>
+                );
+              })}
+            </div>
+          ) : (
+            /* Empty State Live: Banner untuk memotivasi anggota live streaming */
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5 text-center sm:text-left">
+                <div className="p-3 bg-red-500/10 text-red-400 rounded-2xl shrink-0 border border-red-500/20">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">
+                    Belum Ada Siaran Live Saat Ini
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-0.5 max-w-lg">
+                    Jadilah yang pertama melakukan live streaming untuk memasarkan koleksi batu mulia Anda langsung kepada seluruh anggota komunitas!
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
+
+              <button
+                type="button"
+                onClick={onStartLiveHost}
+                className="bg-red-600 hover:bg-red-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              >
+                <Video className="w-4 h-4" />
+                <span>Mulai Live Sekarang</span>
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      </section>
 
       {/* Feed List */}
       {isLoading ? (
@@ -1342,9 +1454,9 @@ export const DashboardBeranda: React.FC<Props> = ({
           currentUser={currentUser}
           onOfferSuccess={handleOfferSuccess}
           onSelectUser={onSelectUser}
-          onCheckout={(catalogId, offerId) => {
+          onCheckout={(catalogId, offerId, verificationData) => {
             if (onOpenTransactionRoom) {
-              onOpenTransactionRoom({ catalogId, offerId });
+              onOpenTransactionRoom({ catalogId, offerId, verificationData });
             }
           }}
         />
@@ -1359,9 +1471,9 @@ export const DashboardBeranda: React.FC<Props> = ({
           sellerId={currentUser.id}
           onRespondOffer={handleRespondOffer}
           onSelectUser={onSelectUser}
-          onOpenRoom={(catalogId, offerId) => {
+          onOpenRoom={(catalogId, offerId, verificationData) => {
             if (onOpenTransactionRoom) {
-              onOpenTransactionRoom({ catalogId, offerId });
+              onOpenTransactionRoom({ catalogId, offerId, verificationData });
             }
           }}
         />
