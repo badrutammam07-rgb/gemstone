@@ -5,6 +5,7 @@ export interface User {
   role: string;
   avatar: string;
   bio?: string;
+  facePhoto?: string;
   followers: string[]; // array of userIds
   following: string[]; // array of userIds
   joinDate: string;

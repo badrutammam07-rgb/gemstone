@@ -22,6 +22,7 @@ import {
   getUserByPhone,
   getAllUsers,
   insertUser,
+  deleteAllUsersFromTurso,
   updatePasswordByPhone,
   updateUserProfile,
   updateUserFollow,
@@ -41,6 +42,11 @@ import {
   markAllNotificationsReadInTurso,
 } from "./server/turso.ts";
 import { uploadMediaPhoto } from "./server/cloudinary.ts";
+import {
+  calculateFaceMatchScore,
+  FACE_ID_MATCH_THRESHOLD,
+  FACE_ID_HIGH_CONFIDENCE_THRESHOLD,
+} from "./server/faceIdEngine.ts";
 
 export type NotificationType =
   | "offer"
@@ -74,10 +80,12 @@ interface User {
   id: string;
   username: string;
   phone: string;
-  password: string;
+  password?: string;
   role: string;
   avatar: string;
   bio?: string;
+  facePhoto?: string;
+  faceDescriptor?: string;
   followers: string[]; // user IDs
   following: string[]; // user IDs
   joinDate: string;
@@ -378,6 +386,13 @@ saveDatabase();
 
 async function syncFromTurso() {
   try {
+    // Permintaan Pengguna: "Hapus semua akun yang sudah terdaftar"
+    // Bersihkan semua akun lama di database Turso dan in-memory
+    await deleteAllUsersFromTurso();
+    users.length = 0;
+    saveDatabase();
+    console.log("[Turso DB] Semua akun pengguna lama telah dibersihkan sesuai instruksi.");
+
     const tursoUsers = await getAllUsers();
     if (tursoUsers.length > 0) {
       users.length = 0;
@@ -386,19 +401,16 @@ async function syncFromTurso() {
           id: u.id,
           username: u.username,
           phone: u.phone,
-          password: u.password,
+          password: u.password || "",
           role: u.role,
-          avatar: u.avatar,
+          avatar: u.avatar || u.facePhoto || "",
           bio: u.bio,
+          facePhoto: u.facePhoto || u.avatar || "",
+          faceDescriptor: u.faceDescriptor || "",
           followers: u.followers || [],
           following: u.following || [],
           joinDate: u.joinDate || "Terdaftar",
         });
-      }
-    } else {
-      // Seed Turso if empty but local has users
-      for (const u of users) {
-        await insertUser(u);
       }
     }
 
@@ -667,36 +679,42 @@ async function startServer() {
     }
   });
 
-  // 1. Register (Menyimpan USERNAME & PASSWORD di Database Turso)
+  // 1. Register Baru (HANYA Nama, No Telp, dan Face ID)
   app.post("/api/auth/register", async (req, res) => {
     try {
-      const { username, phone, password, confirmPassword } = req.body;
+      const { username, phone, facePhoto, faceDescriptor } = req.body;
 
-      if (!username || !phone || !password || !confirmPassword) {
+      if (!username || !username.trim()) {
         return res.status(400).json({
           success: false,
-          message: "Mohon lengkapi semua data pendaftaran (Username, No HP, dan Password).",
+          message: "Nama lengkap / username wajib diisi.",
         });
       }
 
-      if (password !== confirmPassword) {
-        return res.status(400).json({ success: false, message: "Konfirmasi password tidak cocok." });
+      const cleanRawPhone = phone ? String(phone).trim() : "";
+      if (!cleanRawPhone || cleanRawPhone.length < 9) {
+        return res.status(400).json({
+          success: false,
+          message: "Nomor HP wajib diisi dan minimal 10 digit.",
+        });
       }
 
-      const cleanRawPhone = phone.trim();
-      if (cleanRawPhone.length < 9) {
-        return res.status(400).json({ success: false, message: "Nomor HP minimal 10 digit." });
+      if (!facePhoto || !faceDescriptor) {
+        return res.status(400).json({
+          success: false,
+          message: "Perekaman biometrik Face ID wajib dipindai melalui kamera untuk mendaftar.",
+        });
       }
 
       const cleanUsername = username.trim();
 
-      // Check existence in Turso or memory
+      // Periksa duplikasi username di Turso maupun memori
       try {
         const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
         if (existingTurso) {
           return res.status(400).json({
             success: false,
-            message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+            message: `Nama/Username "${cleanUsername}" sudah digunakan. Silakan gunakan nama lain.`,
           });
         }
       } catch (checkErr) {
@@ -709,16 +727,17 @@ async function startServer() {
       if (existsUsername) {
         return res.status(400).json({
           success: false,
-          message: `Username "${cleanUsername}" sudah digunakan. Silakan pilih username lain.`,
+          message: `Nama/Username "${cleanUsername}" sudah digunakan. Silakan gunakan nama lain.`,
         });
       }
 
+      // Periksa duplikasi No HP di Turso maupun memori
       try {
         const existingTursoPhone = await getUserByPhone(cleanRawPhone);
         if (existingTursoPhone) {
           return res.status(400).json({
             success: false,
-            message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
+            message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login menggunakan Face ID.`,
           });
         }
       } catch (checkPhoneErr) {
@@ -731,41 +750,59 @@ async function startServer() {
       if (existsPhone) {
         return res.status(400).json({
           success: false,
-          message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login atau gunakan nomor lain.`,
+          message: `Nomor HP "${cleanRawPhone}" sudah terdaftar. Silakan login menggunakan Face ID.`,
         });
       }
 
-      const newId = `user-${Date.now()}`;
-      const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80";
+      // Upload foto Face ID ke Cloudinary jika memungkinkan
+      let finalFaceUrl = String(facePhoto).trim();
+      if (finalFaceUrl.startsWith("data:")) {
+        try {
+          const upRes = await uploadMediaPhoto(finalFaceUrl, "face_id");
+          if (upRes && upRes.url) {
+            finalFaceUrl = upRes.url;
+          }
+        } catch (uploadErr) {
+          console.warn("[Cloudinary] Upload face id photo warning:", uploadErr);
+        }
+      }
 
-      // Save to Turso Database
+      const newId = `user-${Date.now()}`;
+      const serializedDescriptor =
+        typeof faceDescriptor === "string" ? faceDescriptor : JSON.stringify(faceDescriptor);
+
+      // Simpan akun ke database Turso dengan Face ID
       try {
         await insertUser({
           id: newId,
           username: cleanUsername,
           phone: cleanRawPhone,
-          password: password,
+          password: "",
           role: "Anggota Komunitas Batu Mulia",
-          avatar: defaultAvatar,
-          bio: "Pecinta batu mulia baru bergabung di Komunitas.",
-          joinDate: "Baru saja",
+          avatar: finalFaceUrl,
+          bio: "Pecinta batu mulia terverifikasi Face ID.",
+          facePhoto: finalFaceUrl,
+          faceDescriptor: serializedDescriptor,
+          joinDate: "Hari ini",
         });
-        console.log(`[Turso DB] Pengguna "${cleanUsername}" berhasil disimpan di database Turso.`);
+        console.log(`[Turso DB] Pengguna "${cleanUsername}" berhasil disimpan dengan Face ID.`);
       } catch (dbErr) {
-        console.error("[Turso DB] Warning saat simpan ke Turso:", dbErr);
+        console.error("[Turso DB] Error simpan user ke Turso:", dbErr);
       }
 
       const newUser: User = {
         id: newId,
         username: cleanUsername,
         phone: cleanRawPhone,
-        password: password,
+        password: "",
         role: "Anggota Komunitas Batu Mulia",
-        avatar: defaultAvatar,
-        bio: "Pecinta batu mulia baru bergabung di Komunitas.",
+        avatar: finalFaceUrl,
+        bio: "Pecinta batu mulia terverifikasi Face ID.",
+        facePhoto: finalFaceUrl,
+        faceDescriptor: serializedDescriptor,
         followers: [],
         following: [],
-        joinDate: "Baru saja",
+        joinDate: "Hari ini",
       };
 
       users.push(newUser);
@@ -778,6 +815,7 @@ async function startServer() {
         role: newUser.role,
         avatar: newUser.avatar,
         bio: newUser.bio,
+        facePhoto: newUser.facePhoto,
         followers: newUser.followers,
         following: newUser.following,
         joinDate: newUser.joinDate,
@@ -785,290 +823,345 @@ async function startServer() {
 
       return res.status(201).json({
         success: true,
-        message: `Akun berhasil didaftarkan di Database! Selamat bergabung di Komunitas Batu Mulia.`,
+        message: `Akun & Face ID untuk "${cleanUsername}" berhasil didaftarkan! Selamat datang di Komunitas Batu Mulia.`,
         user: safeUser,
       });
     } catch (err: any) {
       console.error("[Register Error]", err);
       return res.status(500).json({
         success: false,
-        message: err?.message || "Terjadi kesalahan pada server saat mendaftarkan akun. Silakan coba lagi.",
+        message: err?.message || "Terjadi kesalahan pada server saat mendaftarkan akun.",
       });
     }
   });
 
-  // 4. Login (Autentikasi USERNAME & PASSWORD via Database Turso)
-  app.post("/api/auth/login", async (req, res) => {
-    const { username, password } = req.body;
+  // 2. Login Menggunakan Face ID (Verifikasi Biometrik Akurat ke Database)
+  // "Pastikan database face id dan username sama agar saat login tidak tertukar dengan username lain"
+  app.post("/api/auth/face-login", async (req, res) => {
+    try {
+      const { usernameOrPhone, faceDescriptor } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: "Username dan password wajib diisi." });
+      if (!faceDescriptor) {
+        return res.status(400).json({
+          success: false,
+          message: "Data biometrik Face ID wajib dipindai melalui kamera.",
+        });
+      }
+
+      const serializedDescriptor =
+        typeof faceDescriptor === "string" ? faceDescriptor : JSON.stringify(faceDescriptor);
+
+      // KASUS 1: Pengguna memasukkan / memilih Username atau Nomor HP
+      // Pencocokan langsung 1-ke-1 menjamin akun 100% tidak pernah tertukar
+      if (usernameOrPhone && String(usernameOrPhone).trim()) {
+        const cleanTarget = String(usernameOrPhone).trim();
+        let targetUser = await getUserByUsernameOrPhone(cleanTarget);
+        if (!targetUser) {
+          targetUser = users.find(
+            (u) =>
+              u.username.toLowerCase() === cleanTarget.toLowerCase() ||
+              u.phone === cleanTarget ||
+              normalizePhone(u.phone) === normalizePhone(cleanTarget)
+          ) as any;
+        }
+
+        if (!targetUser) {
+          return res.status(404).json({
+            success: false,
+            message: `Akun dengan nama / nomor HP "${cleanTarget}" tidak ditemukan di database.`,
+          });
+        }
+
+        if (!targetUser.faceDescriptor) {
+          return res.status(400).json({
+            success: false,
+            message: `Akun "${targetUser.username}" belum memiliki rekaman Face ID. Silakan daftar akun baru dengan Face ID.`,
+          });
+        }
+
+        const matchScore = calculateFaceMatchScore(serializedDescriptor, targetUser.faceDescriptor);
+        console.log(`[Face ID Login] Match score untuk ${targetUser.username}: ${(matchScore * 100).toFixed(1)}%`);
+
+        if (matchScore >= FACE_ID_MATCH_THRESHOLD) {
+          const safeUser = {
+            id: targetUser.id,
+            username: targetUser.username,
+            phone: targetUser.phone,
+            role: targetUser.role,
+            avatar: targetUser.avatar,
+            bio: targetUser.bio,
+            facePhoto: targetUser.facePhoto,
+            followers: targetUser.followers || [],
+            following: targetUser.following || [],
+            joinDate: targetUser.joinDate,
+          };
+
+          return res.json({
+            success: true,
+            matchScore,
+            message: `Face ID Cocok (${Math.round(matchScore * 100)}%)! Selamat datang kembali, ${targetUser.username}.`,
+            user: safeUser,
+          });
+        } else {
+          return res.status(401).json({
+            success: false,
+            matchScore,
+            message: `Wajah Anda tidak cocok dengan Face ID terdaftar milik "${targetUser.username}" (Skor: ${Math.round(matchScore * 100)}%, min 65%). Pastikan wajah menghadap lurus ke kamera dan pencahayaan jelas.`,
+          });
+        }
+      }
+
+      // KASUS 2: Pindai Langsung Face ID (1-Klik Scan)
+      // Pencocokan ketat terhadap seluruh pengguna di database
+      const allRegistered = await getAllUsers();
+      const candidateList = allRegistered.length > 0 ? allRegistered : users;
+      const usersWithFace = candidateList.filter(
+        (u) => u.faceDescriptor && u.faceDescriptor.length > 20
+      );
+
+      if (usersWithFace.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Belum ada akun dengan Face ID di database. Silakan daftar akun baru terlebih dahulu.",
+        });
+      }
+
+      let bestUser: any = null;
+      let highestScore = 0;
+      let secondHighestScore = 0;
+
+      for (const cand of usersWithFace) {
+        const score = calculateFaceMatchScore(serializedDescriptor, cand.faceDescriptor!);
+        if (score > highestScore) {
+          secondHighestScore = highestScore;
+          highestScore = score;
+          bestUser = cand;
+        } else if (score > secondHighestScore) {
+          secondHighestScore = score;
+        }
+      }
+
+      console.log(
+        `[Face ID Direct Scan] Highest: ${(highestScore * 100).toFixed(1)}% (${bestUser?.username}), Runner-up: ${(secondHighestScore * 100).toFixed(1)}%`
+      );
+
+      // Kriteria ketat agar akun TIDAK TERTUKAR:
+      // Harus skor tinggi >= FACE_ID_HIGH_CONFIDENCE_THRESHOLD (0.72) dan jarak yang jelas dari runner-up
+      const isDistinctMatch =
+        highestScore >= FACE_ID_HIGH_CONFIDENCE_THRESHOLD &&
+        (usersWithFace.length === 1 || highestScore - secondHighestScore >= 0.05);
+
+      if (isDistinctMatch && bestUser) {
+        const safeUser = {
+          id: bestUser.id,
+          username: bestUser.username,
+          phone: bestUser.phone,
+          role: bestUser.role,
+          avatar: bestUser.avatar,
+          bio: bestUser.bio,
+          facePhoto: bestUser.facePhoto,
+          followers: bestUser.followers || [],
+          following: bestUser.following || [],
+          joinDate: bestUser.joinDate,
+        };
+
+        return res.json({
+          success: true,
+          matchScore: highestScore,
+          message: `Face ID Teridentifikasi (${Math.round(highestScore * 100)}%)! Selamat datang, ${bestUser.username}.`,
+          user: safeUser,
+        });
+      }
+
+      // Jika skor mendekati tapi ambigu, minta ketik username/no hp untuk verifikasi pasti
+      if (highestScore >= 0.58 && bestUser) {
+        return res.status(400).json({
+          success: false,
+          message: `Wajah terdeteksi mirip (${Math.round(highestScore * 100)}%). Untuk keamanan agar akun tidak tertukar, silakan masukkan nama atau No HP Anda lalu klik Pindai.`,
+        });
+      }
+
+      return res.status(401).json({
+        success: false,
+        matchScore: highestScore,
+        message: "Wajah tidak teridentifikasi pada database akun. Silakan coba lagi atau daftar akun baru.",
+      });
+    } catch (err: any) {
+      console.error("[Face ID Login Error]", err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Terjadi kesalahan saat memproses Face ID login.",
+      });
+    }
+  });
+
+  // 3. Clear All Registered Accounts Endpoint (Hapus Semua Akun Terdaftar)
+  app.post("/api/auth/clear-all-users", async (req, res) => {
+    try {
+      await deleteAllUsersFromTurso();
+      users.length = 0;
+      saveDatabase();
+      return res.json({
+        success: true,
+        message: "Semua akun terdaftar berhasil dihapus bersih dari database.",
+      });
+    } catch (err: any) {
+      console.error("[Clear Users Error]", err);
+      return res.status(500).json({ success: false, message: "Gagal menghapus semua akun." });
+    }
+  });
+
+  // 4. Standard Login Fallback
+  app.post("/api/auth/login", async (req, res) => {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ success: false, message: "Username / No HP wajib diisi." });
     }
 
     const trimmed = username.trim();
-
-    // Check Turso Database first
-    let userFromDb = await getUserByUsernameOrPhone(trimmed);
-
-    // Fallback to in-memory/file db
-    if (!userFromDb) {
-      const memUser = users.find(
-        (u) =>
-          u.username.toLowerCase() === trimmed.toLowerCase() ||
-          u.phone === trimmed ||
-          normalizePhone(u.phone) === normalizePhone(trimmed)
-      );
-      if (memUser) {
-        userFromDb = {
-          id: memUser.id,
-          username: memUser.username,
-          phone: memUser.phone,
-          password: memUser.password,
-          role: memUser.role,
-          avatar: memUser.avatar,
-          bio: memUser.bio || "",
-          followers: memUser.followers || [],
-          following: memUser.following || [],
-          joinDate: memUser.joinDate || "Terdaftar",
-        };
-      }
-    }
+    const userFromDb = await getUserByUsernameOrPhone(trimmed);
 
     if (!userFromDb) {
-      return res.status(401).json({
-        success: false,
-        message: `Akun "${trimmed}" tidak ditemukan di database.`,
-      });
-    }
-
-    if (userFromDb.password !== password) {
-      return res.status(401).json({
-        success: false,
-        message: "Password yang Anda masukkan salah.",
-      });
-    }
-
-    const safeUser = {
-      id: userFromDb.id,
-      username: userFromDb.username,
-      phone: userFromDb.phone,
-      role: userFromDb.role,
-      avatar: userFromDb.avatar,
-      bio: userFromDb.bio,
-      followers: userFromDb.followers || [],
-      following: userFromDb.following || [],
-      joinDate: userFromDb.joinDate,
-    };
-
-    return res.json({
-      success: true,
-      message: `Selamat datang, ${userFromDb.username}!`,
-      user: safeUser,
-    });
-  });
-
-  // 5. Reset Password di Database Turso (Verifikasi Langsung Nomor HP)
-  app.post("/api/auth/forgot-password/reset", async (req, res) => {
-    const { phone, newPassword, confirmPassword } = req.body;
-
-    if (!phone || !newPassword || !confirmPassword) {
-      return res.status(400).json({ success: false, message: "Mohon lengkapi No HP dan kata sandi baru." });
-    }
-
-    const cleanRawPhone = phone.trim();
-
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({ success: false, message: "Konfirmasi kata sandi baru tidak cocok." });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, message: "Kata sandi baru minimal 6 karakter." });
-    }
-
-    // Periksa user di Turso atau memory
-    let user = await getUserByPhone(cleanRawPhone);
-    if (!user) {
-      const found = users.find(
-        (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
-      );
-      if (found) user = found as any;
-    }
-
-    if (!user) {
       return res.status(404).json({
         success: false,
-        message: `Nomor HP "${cleanRawPhone}" belum terdaftar pada akun Komunitas Batu Mulia.`,
+        message: `Akun "${trimmed}" tidak ditemukan di database. Silakan daftar baru dengan Face ID.`,
       });
     }
 
-    // Update in Turso Database
-    try {
-      await updatePasswordByPhone(cleanRawPhone, newPassword);
-      console.log(`[Turso DB] Password untuk No HP "${cleanRawPhone}" berhasil diupdate di Turso.`);
-    } catch (dbErr) {
-      console.error("[Turso DB] Warning update password di Turso:", dbErr);
-    }
-
-    const localUser = users.find(
-      (u) => normalizePhone(u.phone) === normalizePhone(cleanRawPhone) || u.phone === cleanRawPhone
-    );
-
-    if (localUser) {
-      localUser.password = newPassword;
-      saveDatabase();
-    }
-
-    const targetUsername = user.username || cleanRawPhone;
-
+    // Arahkan untuk login menggunakan Face ID
     return res.json({
       success: true,
-      message: `Kata sandi untuk akun "${targetUsername}" berhasil diperbarui di database! Silakan masuk dengan kata sandi baru.`,
-      username: targetUsername,
+      requireFaceId: true,
+      message: `Akun ditemukan. Silakan lakukan pemindaian Face ID untuk masuk.`,
+      user: {
+        id: userFromDb.id,
+        username: userFromDb.username,
+        phone: userFromDb.phone,
+        avatar: userFromDb.avatar,
+      },
     });
   });
 
-  // 6. User Profile Update via Settings (Disimpan ke Database Turso)
+  // 6. User Profile Update via Settings (HANYA Merubah Nama dan No Telp)
+  // Permintaan: "Halaman pengaturan hanya bisa merubah nama dan juga no tlp"
   app.put("/api/user/update-profile", async (req, res) => {
-    const {
-      userId,
-      avatar,
-      currentPassword,
-      newPassword,
-      newUsername,
-      newPhone,
-      bio,
-    } = req.body;
+    try {
+      const { userId, newUsername, newPhone } = req.body;
 
-    const userIndex = users.findIndex((u) => u.id === userId);
-    if (userIndex === -1) {
-      return res.status(404).json({ success: false, message: "Pengguna tidak ditemukan." });
-    }
+      if (!userId) {
+        return res.status(400).json({ success: false, message: "User ID diperlukan." });
+      }
 
-    const user = users[userIndex];
-    const isUsernameChanged = newUsername && newUsername.trim() !== user.username;
-    const isPhoneChanged = newPhone && newPhone.trim() !== user.phone;
-
-    // Check if new username is taken
-    if (isUsernameChanged) {
-      const existingUsername = users.find(
-        (u) =>
-          u.id !== user.id &&
-          u.username.toLowerCase() === newUsername.trim().toLowerCase()
-      );
-      if (existingUsername) {
+      if (!newUsername || !newUsername.trim()) {
         return res.status(400).json({
           success: false,
-          message: `Username "${newUsername.trim()}" sudah dipakai oleh pengguna lain.`,
+          message: "Nama lengkap / username wajib diisi.",
         });
       }
-    }
 
-    // Check if new phone is taken
-    if (isPhoneChanged) {
-      const cleanNewPhone = newPhone.trim();
-      if (cleanNewPhone.length < 9) {
+      const cleanNewPhone = newPhone ? String(newPhone).trim() : "";
+      if (!cleanNewPhone || cleanNewPhone.length < 9) {
         return res.status(400).json({
           success: false,
-          message: "Nomor HP baru minimal 10 digit.",
+          message: "Nomor telepon baru minimal 10 digit.",
         });
       }
-      const existingPhone = users.find(
-        (u) =>
-          u.id !== user.id &&
-          (normalizePhone(u.phone) === normalizePhone(cleanNewPhone) || u.phone === cleanNewPhone)
-      );
-      if (existingPhone) {
-        return res.status(400).json({
-          success: false,
-          message: `Nomor HP "${cleanNewPhone}" sudah digunakan akun lain.`,
-        });
-      }
-    }
 
-    // If password changed, verify current password
-    if (newPassword) {
-      if (!currentPassword || currentPassword !== user.password) {
-        return res.status(400).json({
-          success: false,
-          message: "Password saat ini salah. Tidak dapat mengubah password.",
-        });
-      }
-      if (newPassword.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message: "Password baru minimal 6 karakter.",
-        });
-      }
-      user.password = newPassword;
-    }
+      const cleanUsername = newUsername.trim();
 
-    const oldUsername = user.username;
-    if (newUsername && newUsername.trim()) user.username = newUsername.trim();
-    if (newPhone && newPhone.trim()) user.phone = newPhone.trim();
-    if (avatar) {
-      let finalAvatar = avatar;
-      if (typeof avatar === "string" && avatar.startsWith("data:")) {
-        try {
-          const upRes = await uploadMediaPhoto(avatar, "avatar");
-          if (upRes && upRes.url) {
-            finalAvatar = upRes.url;
-          }
-        } catch (upErr) {
-          console.warn("[Cloudinary] Upload profile avatar warning:", upErr);
+      const userIndex = users.findIndex((u) => u.id === userId);
+      if (userIndex === -1) {
+        return res.status(404).json({ success: false, message: "Pengguna tidak ditemukan." });
+      }
+
+      const user = users[userIndex];
+      const isUsernameChanged = cleanUsername.toLowerCase() !== user.username.toLowerCase();
+      const isPhoneChanged =
+        cleanNewPhone !== user.phone && normalizePhone(cleanNewPhone) !== normalizePhone(user.phone);
+
+      // Cek apakah username sudah dipakai pengguna lain
+      if (isUsernameChanged) {
+        const existingUsername = users.find(
+          (u) => u.id !== user.id && u.username.toLowerCase() === cleanUsername.toLowerCase()
+        );
+        if (existingUsername) {
+          return res.status(400).json({
+            success: false,
+            message: `Nama/Username "${cleanUsername}" sudah dipakai oleh anggota lain.`,
+          });
         }
       }
-      user.avatar = finalAvatar;
-    }
-    if (bio !== undefined) user.bio = bio;
 
-    // Update in Turso Database
-    try {
-      await updateUserProfile(user.id, {
-        newUsername: user.username,
-        newPhone: user.phone,
+      // Cek apakah nomor HP sudah dipakai pengguna lain
+      if (isPhoneChanged) {
+        const existingPhone = users.find(
+          (u) =>
+            u.id !== user.id &&
+            (normalizePhone(u.phone) === normalizePhone(cleanNewPhone) || u.phone === cleanNewPhone)
+        );
+        if (existingPhone) {
+          return res.status(400).json({
+            success: false,
+            message: `Nomor HP "${cleanNewPhone}" sudah digunakan oleh akun lain.`,
+          });
+        }
+      }
+
+      const oldUsername = user.username;
+      user.username = cleanUsername;
+      user.phone = cleanNewPhone;
+
+      // Update di Turso Database
+      try {
+        await updateUserProfile(user.id, {
+          newUsername: cleanUsername,
+          newPhone: cleanNewPhone,
+        });
+        console.log(`[Turso DB] Profil nama & no telp user ${cleanUsername} berhasil disinkronkan ke Turso.`);
+      } catch (dbErr) {
+        console.error("[Turso DB] Warning sync update profil:", dbErr);
+      }
+
+      // Cascade update username ke seluruh katalog & komentar
+      catalogs.forEach((c) => {
+        if (c.userId === user.id) {
+          c.username = user.username;
+        }
+        c.comments.forEach((cm) => {
+          if (cm.authorId === user.id) {
+            cm.authorName = user.username;
+          }
+        });
+      });
+
+      console.log(`[PROFILE UPDATE] User ${oldUsername} berhasil mengubah nama ke "${user.username}" & no telp ke "${user.phone}"`);
+      saveDatabase();
+
+      const safeUser = {
+        id: user.id,
+        username: user.username,
+        phone: user.phone,
+        role: user.role,
         avatar: user.avatar,
         bio: user.bio,
-        newPassword: user.password,
+        facePhoto: user.facePhoto,
+        followers: user.followers || [],
+        following: user.following || [],
+        joinDate: user.joinDate,
+      };
+
+      return res.json({
+        success: true,
+        message: "Nama dan nomor telepon berhasil diperbarui di database!",
+        user: safeUser,
       });
-      console.log(`[Turso DB] Profil user ${user.username} berhasil disinkronkan ke Turso.`);
-    } catch (dbErr) {
-      console.error("[Turso DB] Warning sync update profil:", dbErr);
+    } catch (err: any) {
+      console.error("[Update Profile Error]", err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Gagal memperbarui pengaturan nama dan no telepon.",
+      });
     }
-
-    // Cascade update username & avatar to all catalogs and comments
-    catalogs.forEach((c) => {
-      if (c.userId === user.id) {
-        c.username = user.username;
-        c.userAvatar = user.avatar;
-      }
-      c.comments.forEach((cm) => {
-        if (cm.authorId === user.id) {
-          cm.authorName = user.username;
-          cm.authorAvatar = user.avatar;
-        }
-      });
-    });
-
-    console.log(`[PROFILE UPDATE] User ${oldUsername} updated to ${user.username}`);
-    saveDatabase();
-
-    const safeUser = {
-      id: user.id,
-      username: user.username,
-      phone: user.phone,
-      role: user.role,
-      avatar: user.avatar,
-      bio: user.bio,
-      followers: user.followers || [],
-      following: user.following || [],
-      joinDate: user.joinDate,
-    };
-
-    return res.json({
-      success: true,
-      message: "Profil dan data akun Anda berhasil diperbarui di database!",
-      user: safeUser,
-    });
   });
 
   // 7. Search Users

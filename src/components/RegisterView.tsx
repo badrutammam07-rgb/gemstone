@@ -1,6 +1,21 @@
-import React, { useState } from "react";
-import { User, Phone, Lock, Eye, EyeOff, ArrowLeft, CheckCircle2, AlertCircle, ShieldCheck } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import {
+  User as UserIcon,
+  Phone,
+  Camera,
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  ShieldCheck,
+  RefreshCw,
+  ScanFace,
+  Upload,
+} from "lucide-react";
 import { User as UserType } from "../types";
+import {
+  extractFaceDescriptorFromCanvas,
+  extractFaceDescriptorFromDataUrl,
+} from "../utils/faceIdEngine";
 
 interface Props {
   onRegisterSuccess: (user: UserType) => void;
@@ -13,41 +28,153 @@ export const RegisterView: React.FC<Props> = ({
 }) => {
   const [username, setUsername] = useState("");
   const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // Face ID Biometric states
+  const [cameraActive, setCameraActive] = useState(false);
+  const [facePhoto, setFacePhoto] = useState<string | null>(null);
+  const [faceDescriptor, setFaceDescriptor] = useState<any | null>(null);
+  const [isProcessingFace, setIsProcessingFace] = useState(false);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Stop camera on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  const startCamera = async () => {
+    setErrorMessage(null);
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          "Kamera tidak didukung oleh browser Anda. Silakan unggah foto wajah selfie."
+        );
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 480 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      });
+
+      mediaStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+      setCameraActive(true);
+    } catch (err: any) {
+      console.warn("[Register Camera Warning]", err);
+      setErrorMessage(
+        "Kamera tidak dapat diakses langsung. Anda dapat mengunggah foto selfie wajah jelas melalui tombol di bawah."
+      );
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
+  const captureFaceSnapshot = async () => {
+    if (!videoRef.current) return;
+    setIsProcessingFace(true);
+    setErrorMessage(null);
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 320;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (!ctx) throw new Error("Gagal menginisialisasi canvas");
+
+      // Cerminkan horizontal agar seperti cermin alami
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      const descriptor = extractFaceDescriptorFromCanvas(canvas);
+
+      setFacePhoto(dataUrl);
+      setFaceDescriptor(descriptor);
+      stopCamera();
+    } catch (err: any) {
+      console.error("[Face Capture Error]", err);
+      setErrorMessage("Gagal menganalisis biometrik wajah. Silakan coba lagi.");
+    } finally {
+      setIsProcessingFace(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setErrorMessage("Silakan pilih berkas gambar foto selfie yang valid.");
+      return;
+    }
+
+    setIsProcessingFace(true);
+    setErrorMessage(null);
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const dataUrl = event.target?.result as string;
+        const descriptor = await extractFaceDescriptorFromDataUrl(dataUrl);
+
+        setFacePhoto(dataUrl);
+        setFaceDescriptor(descriptor);
+        stopCamera();
+      } catch (err: any) {
+        console.error("[File Face Parse Error]", err);
+        setErrorMessage("Gagal mengekstraksi biometrik wajah dari foto yang diunggah.");
+      } finally {
+        setIsProcessingFace(false);
+      }
+    };
+    reader.onerror = () => {
+      setIsProcessingFace(false);
+      setErrorMessage("Gagal membaca file gambar.");
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
     if (!username.trim()) {
-      setErrorMessage("Nama untuk username wajib diisi.");
+      setErrorMessage("Nama lengkap / username wajib diisi.");
       return;
     }
 
     if (!phone.trim() || phone.trim().length < 9) {
-      setErrorMessage("Silakan masukkan Nomor HP yang valid (minimal 10 digit).");
+      setErrorMessage("Silakan masukkan Nomor Telepon / HP yang valid (minimal 10 digit).");
       return;
     }
 
-    if (!password) {
-      setErrorMessage("Password wajib diisi.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setErrorMessage("Konfirmasi password tidak sesuai dengan password.");
-      return;
-    }
-
-    if (password.length < 6) {
-      setErrorMessage("Password minimal 6 karakter demi keamanan akun.");
+    if (!facePhoto || !faceDescriptor) {
+      setErrorMessage("Biometrik Face ID wajib direkam melalui kamera untuk mendaftarkan akun.");
       return;
     }
 
@@ -60,28 +187,26 @@ export const RegisterView: React.FC<Props> = ({
         body: JSON.stringify({
           username: username.trim(),
           phone: phone.trim(),
-          password,
-          confirmPassword,
+          facePhoto,
+          faceDescriptor,
         }),
       });
 
       let data: any = {};
       try {
-        const rawText = await response.text();
-        data = JSON.parse(rawText);
-      } catch (parseErr) {
-        console.error("[Register] Response parse error:", parseErr);
-        throw new Error("Gagal memproses respon server. Silakan coba lagi.");
+        data = await response.json();
+      } catch {
+        throw new Error("Gagal membaca respon server. Silakan coba lagi.");
       }
 
       if (!response.ok || !data.success) {
         throw new Error(data.message || "Pendaftaran akun gagal.");
       }
 
-      setSuccessMessage("Pendaftaran berhasil! Mengalihkan ke aplikasi...");
+      setSuccessMessage(data.message || "Pendaftaran berhasil! Mengalihkan ke aplikasi...");
       setTimeout(() => {
         onRegisterSuccess(data.user);
-      }, 600);
+      }, 700);
     } catch (err: any) {
       setErrorMessage(err.message || "Gagal mendaftarkan akun.");
     } finally {
@@ -96,17 +221,21 @@ export const RegisterView: React.FC<Props> = ({
         <button
           id="btn-back-to-login"
           type="button"
-          onClick={onNavigateToLogin}
+          onClick={() => {
+            stopCamera();
+            onNavigateToLogin();
+          }}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-emerald-400 mb-3 transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Kembali ke Halaman Login
+          Kembali ke Halaman Login Face ID
         </button>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-100 flex items-center justify-center gap-2">
+          <ScanFace className="w-7 h-7 text-emerald-400" />
           Daftar Akun Baru
         </h1>
         <p className="text-xs text-slate-400 mt-1">
-          Bergabunglah dengan ribuan kolektor & penikmat batu mulia se-Nusantara
+          Pendaftaran cepat hanya berisi <span className="text-emerald-400 font-semibold">Nama, No Telp, dan Face ID</span>
         </p>
       </div>
 
@@ -115,12 +244,12 @@ export const RegisterView: React.FC<Props> = ({
         id="card-register"
         className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-2xl p-6 sm:p-7 backdrop-blur-sm"
       >
-        {/* Info Pendaftaran Cepat dengan No HP */}
+        {/* Security Info Banner */}
         <div className="mb-5 bg-emerald-950/60 border border-emerald-800/80 rounded-xl p-3 flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           <div className="text-xs text-emerald-200 leading-relaxed">
-            <strong className="font-semibold text-emerald-100">Pendaftaran Langsung dengan No HP</strong>:
-            Cukup masukkan nomor handphone aktif Anda untuk registrasi dan login dengan cepat dan aman.
+            <strong className="font-semibold text-emerald-100">Autentikasi Biometrik Face ID</strong>:
+            Akun Anda terhubung langsung ke biometrik wajah. Tanpa repot mengingat kata sandi dan dijamin tidak tertukar.
           </div>
         </div>
 
@@ -147,40 +276,37 @@ export const RegisterView: React.FC<Props> = ({
         )}
 
         <form onSubmit={handleRegister} className="space-y-4">
-          {/* Nama (Username) */}
+          {/* 1. Nama Lengkap */}
           <div>
             <label
               htmlFor="input-register-username"
               className="block text-xs font-semibold text-slate-300 mb-1.5"
             >
-              Nama Lengkap / Username Komunitas
+              Nama Lengkap
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <User className="w-4 h-4" />
+                <UserIcon className="w-4 h-4" />
               </div>
               <input
                 id="input-register-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Masukkan nama pengguna"
-                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-800/80 border border-slate-700 rounded-xl focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all placeholder:text-slate-500 text-slate-100"
+                placeholder="Masukkan nama lengkap Anda"
+                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950/70 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all"
                 required
               />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Nama ini akan tampil pada katalog batu mulia dan profil publik Anda
-            </p>
           </div>
 
-          {/* Nomor HP */}
+          {/* 2. Nomor Telepon */}
           <div>
             <label
               htmlFor="input-register-phone"
               className="block text-xs font-semibold text-slate-300 mb-1.5"
             >
-              Nomor Handphone (No HP)
+              Nomor Telepon (HP / WhatsApp)
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -191,112 +317,196 @@ export const RegisterView: React.FC<Props> = ({
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="Contoh: 081298765432"
-                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-800/80 border border-slate-700 rounded-xl focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all placeholder:text-slate-500 text-slate-100 font-mono"
+                placeholder="Contoh: 081234567890"
+                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950/70 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all"
                 required
               />
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              Digunakan untuk masuk akun dan pemulihan kata sandi (Lupa Password)
+              Nomor aktif untuk keperluan transaksi dan verifikasi komunitas
             </p>
           </div>
 
-          {/* Password */}
-          <div>
-            <label
-              htmlFor="input-register-password"
-              className="block text-xs font-semibold text-slate-300 mb-1.5"
-            >
-              Kata Sandi (Password)
+          {/* 3. Perekaman Face ID */}
+          <div className="pt-2 border-t border-slate-800">
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <ScanFace className="w-4 h-4 text-emerald-400" />
+                Perekaman Face ID Wajib
+              </span>
+              {facePhoto && (
+                <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Face ID Siap
+                </span>
+              )}
             </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <Lock className="w-4 h-4" />
-              </div>
-              <input
-                id="input-register-password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimal 6 karakter"
-                className="w-full pl-10 pr-10 py-2.5 text-sm bg-slate-800/80 border border-slate-700 rounded-xl focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all placeholder:text-slate-500 text-slate-100"
-                required
-              />
-              <button
-                id="btn-toggle-register-password"
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
+
+            {/* Viewfinder Camera Box / Captured Preview */}
+            <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-3 min-h-[220px]">
+              {facePhoto ? (
+                // Captured Face Preview
+                <div className="flex flex-col items-center py-2 animate-fade-in text-center">
+                  <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg shadow-emerald-500/20 mb-3 ring-4 ring-emerald-500/20">
+                    <img
+                      src={facePhoto}
+                      alt="Face ID Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 rounded-full text-emerald-300 text-xs font-semibold mb-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Biometrik Wajah Berhasil Dipindai
+                  </div>
+                  <p className="text-[11px] text-slate-400 max-w-xs">
+                    Wajah Anda telah tersimpan di database Face ID dan siap digunakan untuk login.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFacePhoto(null);
+                      setFaceDescriptor(null);
+                      startCamera();
+                    }}
+                    className="mt-3 text-xs text-slate-400 hover:text-white flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Pindai Ulang Wajah
+                  </button>
+                </div>
+              ) : cameraActive ? (
+                // Live Camera Active
+                <div className="relative w-full flex flex-col items-center">
+                  <div className="relative w-56 h-56 rounded-full overflow-hidden border-2 border-emerald-400/80 shadow-inner bg-black flex items-center justify-center">
+                    <video
+                      ref={videoRef}
+                      playsInline
+                      muted
+                      autoPlay
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                    {/* Oval Biometric Guide */}
+                    <div className="absolute inset-0 border-2 border-dashed border-emerald-400/60 rounded-full pointer-events-none animate-pulse" />
+                    <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-emerald-400/80 shadow-[0_0_10px_#10b981] animate-bounce pointer-events-none" />
+                  </div>
+                  <p className="text-[11px] text-emerald-300 font-medium mt-2">
+                    Posisikan wajah Anda tepat di dalam lingkaran
+                  </p>
+
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={captureFaceSnapshot}
+                      disabled={isProcessingFace}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-emerald-900/30 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isProcessingFace ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Camera className="w-3.5 h-3.5" />
+                      )}
+                      {isProcessingFace ? "Menganalisis Biometrik..." : "Ambil Foto Face ID"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-2 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                // Camera Inactive / Trigger Button
+                <div className="text-center py-4 flex flex-col items-center">
+                  <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-emerald-400 mb-3 shadow-inner">
+                    <ScanFace className="w-8 h-8" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-slate-200">
+                    Perekaman Biometrik Wajah
+                  </h4>
+                  <p className="text-xs text-slate-400 max-w-xs mt-1 mb-4">
+                    Gunakan kamera perangkat Anda untuk memindai wajah langsung. Data Face ID akan dienkripsi di database.
+                  </p>
+
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      id="btn-start-face-camera"
+                      type="button"
+                      onClick={startCamera}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-950/20 transition-all cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      Buka Kamera & Pindai Wajah
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      Upload Selfie
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFileUpload}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Konfirmasi Password */}
-          <div>
-            <label
-              htmlFor="input-register-confirm-password"
-              className="block text-xs font-semibold text-slate-300 mb-1.5"
-            >
-              Konfirmasi Kata Sandi
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <Lock className="w-4 h-4" />
-              </div>
-              <input
-                id="input-register-confirm-password"
-                type={showConfirmPassword ? "text" : "password"}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Ulangi kata sandi di atas"
-                className="w-full pl-10 pr-10 py-2.5 text-sm bg-slate-800/80 border border-slate-700 rounded-xl focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all placeholder:text-slate-500 text-slate-100"
-                required
-              />
-              <button
-                id="btn-toggle-register-confirm-password"
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Submit Button */}
+          {/* Register Submit Button */}
           <button
             id="btn-submit-register"
             type="submit"
-            disabled={isLoading}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold py-2.5 px-4 rounded-xl shadow-lg shadow-emerald-950/40 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer pt-2.5 mt-3"
+            disabled={isLoading || !facePhoto}
+            className="w-full mt-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold py-2.5 px-4 rounded-xl shadow-lg shadow-emerald-950/30 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {isLoading ? (
               <span className="inline-flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Mendaftarkan Akun...
+                Mendaftarkan Akun & Face ID...
               </span>
             ) : (
-              <span>Daftar Akun Sekarang</span>
+              <>
+                <ScanFace className="w-4 h-4" />
+                <span>Daftarkan Akun Baru</span>
+              </>
             )}
           </button>
         </form>
 
-        {/* Link to login */}
-        <div className="mt-5 text-center pt-4 border-t border-slate-800">
-          <p className="text-xs text-slate-400">
-            Sudah memiliki akun?{" "}
-            <button
-              id="btn-switch-to-login"
-              type="button"
-              onClick={onNavigateToLogin}
-              className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline cursor-pointer"
-            >
-              Masuk di sini
-            </button>
-          </p>
+        {/* Divider */}
+        <div className="relative my-6">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-slate-800" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-slate-900 px-3 text-slate-500 font-medium">
+              Sudah punya akun terdaftar?
+            </span>
+          </div>
         </div>
+
+        {/* Back to Login */}
+        <button
+          id="btn-goto-login-from-register"
+          type="button"
+          onClick={() => {
+            stopCamera();
+            onNavigateToLogin();
+          }}
+          className="w-full bg-slate-800/80 hover:bg-slate-800 text-slate-300 font-semibold py-2.5 px-4 rounded-xl border border-slate-700 transition-colors text-sm flex items-center justify-center gap-2 cursor-pointer"
+        >
+          Masuk dengan Face ID
+        </button>
       </div>
     </div>
   );

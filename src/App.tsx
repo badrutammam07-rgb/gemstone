@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { LoginView } from "./components/LoginView";
 import { RegisterView } from "./components/RegisterView";
 import { ForgotPasswordView } from "./components/ForgotPasswordView";
@@ -67,6 +67,108 @@ export default function App() {
 
   const [systemNotice, setSystemNotice] = useState<string | null>(null);
 
+  // State untuk pengguna yang terkunci akibat sesi berakhir > 5 menit
+  const [lockedUserForFaceId, setLockedUserForFaceId] = useState<{
+    username: string;
+    phone?: string;
+    avatar?: string;
+  } | null>(null);
+
+  const hiddenAtRef = useRef<number | null>(null);
+  const lastActiveRef = useRef<number>(Date.now());
+  const FIVE_MINUTES_MS = 5 * 60 * 1000; // 5 Menit = 300,000 ms
+
+  // Deteksi otomatis: Jika aplikasi tidak digunakan selama 5 menit karena pindah layar ke aplikasi lain
+  // maka akan terlogout secara otomatis dan wajib login kembali menggunakan Face ID.
+  useEffect(() => {
+    if (!currentUser) return;
+
+    lastActiveRef.current = Date.now();
+    hiddenAtRef.current = null;
+
+    const triggerAutoLogoutDueToInactivity = () => {
+      console.log(
+        "[Security] Auto-logout: Aplikasi tidak digunakan / pindah layar lebih dari 5 menit."
+      );
+      setLockedUserForFaceId({
+        username: currentUser.username,
+        phone: currentUser.phone,
+        avatar: currentUser.avatar,
+      });
+      setCurrentUser(null);
+      try {
+        localStorage.removeItem("komunitas_batu_mulia_user");
+      } catch {}
+      setCurrentAuthView("login");
+      setIsSettingsOpen(false);
+      setSystemNotice(
+        "Sesi Anda telah terkunci otomatis karena berpindah layar > 5 menit. Silakan pindai Face ID untuk masuk kembali."
+      );
+      setTimeout(() => setSystemNotice(null), 10000);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+      } else if (document.visibilityState === "visible") {
+        if (hiddenAtRef.current && Date.now() - hiddenAtRef.current >= FIVE_MINUTES_MS) {
+          hiddenAtRef.current = null;
+          triggerAutoLogoutDueToInactivity();
+        } else {
+          hiddenAtRef.current = null;
+          lastActiveRef.current = Date.now();
+        }
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (!hiddenAtRef.current) {
+        hiddenAtRef.current = Date.now();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (hiddenAtRef.current && Date.now() - hiddenAtRef.current >= FIVE_MINUTES_MS) {
+        hiddenAtRef.current = null;
+        triggerAutoLogoutDueToInactivity();
+      } else {
+        hiddenAtRef.current = null;
+        lastActiveRef.current = Date.now();
+      }
+    };
+
+    const handleUserActivity = () => {
+      lastActiveRef.current = Date.now();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("focus", handleWindowFocus);
+
+    const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    activityEvents.forEach((evt) =>
+      window.addEventListener(evt, handleUserActivity, { passive: true })
+    );
+
+    // Interval pemeriksaan berkala tiap 5 detik
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      if (hiddenAtRef.current && now - hiddenAtRef.current >= FIVE_MINUTES_MS) {
+        triggerAutoLogoutDueToInactivity();
+      } else if (now - lastActiveRef.current >= FIVE_MINUTES_MS) {
+        triggerAutoLogoutDueToInactivity();
+      }
+    }, 5000);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("focus", handleWindowFocus);
+      activityEvents.forEach((evt) => window.removeEventListener(evt, handleUserActivity));
+      clearInterval(checkInterval);
+    };
+  }, [currentUser]);
+
   // Check if session exists in storage and verify with backend database
   useEffect(() => {
     try {
@@ -107,6 +209,7 @@ export default function App() {
 
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
+    setLockedUserForFaceId(null);
     try {
       localStorage.setItem("komunitas_batu_mulia_user", JSON.stringify(user));
     } catch {}
@@ -470,6 +573,7 @@ export default function App() {
             onNavigateToForgotPassword={() => {
               setCurrentAuthView("forgot_password");
             }}
+            lockedUser={lockedUserForFaceId}
           />
         )}
 

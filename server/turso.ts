@@ -83,16 +83,26 @@ async function initTablesOnClient(client: Client): Promise<void> {
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       phone TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
+      password TEXT DEFAULT '',
       role TEXT NOT NULL DEFAULT 'Anggota Komunitas Batu Mulia',
       avatar TEXT,
       bio TEXT,
+      face_photo TEXT,
+      face_descriptor TEXT,
       followers TEXT DEFAULT '[]',
       following TEXT DEFAULT '[]',
       join_date TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Migrasi kolom face_photo & face_descriptor jika tabel sudah dibuat sebelumnya
+  try {
+    await client.execute("ALTER TABLE users ADD COLUMN face_photo TEXT;");
+  } catch {}
+  try {
+    await client.execute("ALTER TABLE users ADD COLUMN face_descriptor TEXT;");
+  } catch {}
 
   await client.execute(`
     CREATE TABLE IF NOT EXISTS catalogs_v2 (
@@ -181,13 +191,26 @@ export interface TursoUser {
   id: string;
   username: string;
   phone: string;
-  password: string;
+  password?: string;
   role: string;
   avatar: string;
   bio: string;
+  facePhoto?: string;
+  faceDescriptor?: string;
   followers: string[];
   following: string[];
   joinDate: string;
+}
+
+export async function deleteAllUsersFromTurso(): Promise<boolean> {
+  try {
+    await safeExecute("DELETE FROM users;");
+    console.log("[Turso DB] Seluruh pengguna berhasil dihapus dari database.");
+    return true;
+  } catch (err) {
+    console.error("[Turso DB] deleteAllUsersFromTurso error:", err);
+    return false;
+  }
 }
 
 export async function getUserByUsernameOrPhone(identifier: string): Promise<TursoUser | null> {
@@ -205,10 +228,12 @@ export async function getUserByUsernameOrPhone(identifier: string): Promise<Turs
       id: String(row.id),
       username: String(row.username),
       phone: String(row.phone),
-      password: String(row.password),
+      password: String(row.password || ""),
       role: String(row.role || "Anggota Komunitas Batu Mulia"),
-      avatar: String(row.avatar || ""),
+      avatar: String(row.avatar || row.face_photo || ""),
       bio: String(row.bio || ""),
+      facePhoto: String(row.face_photo || row.avatar || ""),
+      faceDescriptor: String(row.face_descriptor || ""),
       followers: JSON.parse(String(row.followers || "[]")),
       following: JSON.parse(String(row.following || "[]")),
       joinDate: String(row.join_date || "Terdaftar"),
@@ -233,10 +258,12 @@ export async function getUserById(id: string): Promise<TursoUser | null> {
       id: String(row.id),
       username: String(row.username),
       phone: String(row.phone),
-      password: String(row.password),
+      password: String(row.password || ""),
       role: String(row.role || "Anggota Komunitas Batu Mulia"),
-      avatar: String(row.avatar || ""),
+      avatar: String(row.avatar || row.face_photo || ""),
       bio: String(row.bio || ""),
+      facePhoto: String(row.face_photo || row.avatar || ""),
+      faceDescriptor: String(row.face_descriptor || ""),
       followers: JSON.parse(String(row.followers || "[]")),
       following: JSON.parse(String(row.following || "[]")),
       joinDate: String(row.join_date || "Terdaftar"),
@@ -271,10 +298,12 @@ export async function getUserByPhone(phone: string): Promise<TursoUser | null> {
       id: String(row.id),
       username: String(row.username),
       phone: String(row.phone),
-      password: String(row.password),
+      password: String(row.password || ""),
       role: String(row.role || "Anggota Komunitas Batu Mulia"),
-      avatar: String(row.avatar || ""),
+      avatar: String(row.avatar || row.face_photo || ""),
       bio: String(row.bio || ""),
+      facePhoto: String(row.face_photo || row.avatar || ""),
+      faceDescriptor: String(row.face_descriptor || ""),
       followers: JSON.parse(String(row.followers || "[]")),
       following: JSON.parse(String(row.following || "[]")),
       joinDate: String(row.join_date || "Terdaftar"),
@@ -289,24 +318,41 @@ export async function insertUser(user: {
   id: string;
   username: string;
   phone: string;
-  password: string;
+  password?: string;
   role?: string;
   avatar?: string;
   bio?: string;
+  facePhoto?: string;
+  faceDescriptor?: string;
   joinDate?: string;
 }): Promise<TursoUser> {
   const role = user.role || "Anggota Komunitas Batu Mulia";
   const avatar =
     user.avatar ||
+    user.facePhoto ||
     "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=250&q=80";
-  const bio = user.bio || "Pecinta batu mulia baru bergabung di Komunitas.";
+  const bio = user.bio || "Pecinta batu mulia terverifikasi Face ID.";
   const joinDate = user.joinDate || "Baru saja";
+  const password = user.password || "";
+  const facePhoto = user.facePhoto || avatar;
+  const faceDescriptor = user.faceDescriptor || "";
 
   try {
     await safeExecute({
-      sql: `INSERT INTO users (id, username, phone, password, role, avatar, bio, followers, following, join_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?)`,
-      args: [user.id, user.username, user.phone, user.password, role, avatar, bio, joinDate],
+      sql: `INSERT INTO users (id, username, phone, password, role, avatar, bio, face_photo, face_descriptor, followers, following, join_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?)`,
+      args: [
+        user.id,
+        user.username,
+        user.phone,
+        password,
+        role,
+        avatar,
+        bio,
+        facePhoto,
+        faceDescriptor,
+        joinDate,
+      ],
     });
   } catch (err) {
     console.warn("[Turso DB] Insert user warning:", err);
@@ -316,10 +362,12 @@ export async function insertUser(user: {
     id: user.id,
     username: user.username,
     phone: user.phone,
-    password: user.password,
+    password,
     role,
     avatar,
     bio,
+    facePhoto,
+    faceDescriptor,
     followers: [],
     following: [],
     joinDate,
@@ -407,10 +455,12 @@ export async function getAllUsers(): Promise<TursoUser[]> {
       id: String(row.id),
       username: String(row.username),
       phone: String(row.phone),
-      password: String(row.password),
+      password: String(row.password || ""),
       role: String(row.role || "Anggota Komunitas Batu Mulia"),
-      avatar: String(row.avatar || ""),
+      avatar: String(row.avatar || row.face_photo || ""),
       bio: String(row.bio || ""),
+      facePhoto: String(row.face_photo || row.avatar || ""),
+      faceDescriptor: String(row.face_descriptor || ""),
       followers: JSON.parse(String(row.followers || "[]")),
       following: JSON.parse(String(row.following || "[]")),
       joinDate: String(row.join_date || "Terdaftar"),
