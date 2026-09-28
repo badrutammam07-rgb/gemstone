@@ -386,13 +386,6 @@ saveDatabase();
 
 async function syncFromTurso() {
   try {
-    // Permintaan Pengguna: "Hapus semua akun yang sudah terdaftar"
-    // Bersihkan semua akun lama di database Turso dan in-memory
-    await deleteAllUsersFromTurso();
-    users.length = 0;
-    saveDatabase();
-    console.log("[Turso DB] Semua akun pengguna lama telah dibersihkan sesuai instruksi.");
-
     const tursoUsers = await getAllUsers();
     if (tursoUsers.length > 0) {
       users.length = 0;
@@ -411,6 +404,26 @@ async function syncFromTurso() {
           following: u.following || [],
           joinDate: u.joinDate || "Terdaftar",
         });
+      }
+    } else if (users.length > 0) {
+      // Jika Turso masih kosong tetapi file database.json lokal memiliki akun, sinkronkan ke Turso
+      for (const u of users) {
+        try {
+          await insertUser({
+            id: u.id,
+            username: u.username,
+            phone: u.phone,
+            password: u.password || "",
+            role: u.role,
+            avatar: u.avatar || u.facePhoto || "",
+            bio: u.bio || "",
+            facePhoto: u.facePhoto || u.avatar || "",
+            faceDescriptor: u.faceDescriptor || "",
+            joinDate: u.joinDate || "Terdaftar",
+          });
+        } catch (e) {
+          console.warn("[Turso DB] Seed user warning:", e);
+        }
       }
     }
 
@@ -679,6 +692,47 @@ async function startServer() {
     }
   });
 
+  // Endpoint untuk mengecek ketersediaan username secara realtime (memastikan username unik / tidak kembar)
+  app.get("/api/auth/check-username", async (req, res) => {
+    try {
+      const raw = String(req.query.username || "").trim();
+      if (!raw) {
+        return res.json({ available: false, message: "Username tidak boleh kosong." });
+      }
+
+      // 1. Cek di memori (case-insensitive)
+      const existsMem = users.some(
+        (u) => u.username.trim().toLowerCase() === raw.toLowerCase()
+      );
+      if (existsMem) {
+        return res.json({
+          available: false,
+          message: `Nama/Username "${raw}" sudah terdaftar. Username tidak boleh ada yang sama.`,
+        });
+      }
+
+      // 2. Cek di database Turso (case-insensitive)
+      try {
+        const tursoUser = await getUserByUsernameOrPhone(raw);
+        if (tursoUser && tursoUser.username.trim().toLowerCase() === raw.toLowerCase()) {
+          return res.json({
+            available: false,
+            message: `Nama/Username "${raw}" sudah terdaftar. Username tidak boleh ada yang sama.`,
+          });
+        }
+      } catch (err) {
+        console.warn("[Check Username Turso Warning]", err);
+      }
+
+      return res.json({
+        available: true,
+        message: `Username "${raw}" tersedia.`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ available: false, message: "Gagal memeriksa username." });
+    }
+  });
+
   // 1. Register Baru (HANYA Nama, No Telp, dan Face ID)
   app.post("/api/auth/register", async (req, res) => {
     try {
@@ -708,13 +762,14 @@ async function startServer() {
 
       const cleanUsername = username.trim();
 
-      // Periksa duplikasi username di Turso maupun memori
+      // Periksa duplikasi username di Turso maupun memori (Username TIDAK BOLEH ADA YANG SAMA)
       try {
         const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
-        if (existingTurso) {
+        if (existingTurso && existingTurso.username.trim().toLowerCase() === cleanUsername.toLowerCase()) {
           return res.status(400).json({
             success: false,
-            message: `Nama/Username "${cleanUsername}" sudah digunakan. Silakan gunakan nama lain.`,
+            code: "DUPLICATE_USERNAME",
+            message: `Nama/Username "${cleanUsername}" sudah digunakan. Username tidak boleh ada yang sama. Silakan gunakan nama/username lain yang unik.`,
           });
         }
       } catch (checkErr) {
@@ -722,12 +777,13 @@ async function startServer() {
       }
 
       const existsUsername = users.find(
-        (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
+        (u) => u.username.trim().toLowerCase() === cleanUsername.toLowerCase()
       );
       if (existsUsername) {
         return res.status(400).json({
           success: false,
-          message: `Nama/Username "${cleanUsername}" sudah digunakan. Silakan gunakan nama lain.`,
+          code: "DUPLICATE_USERNAME",
+          message: `Nama/Username "${cleanUsername}" sudah digunakan. Username tidak boleh ada yang sama. Silakan gunakan nama/username lain yang unik.`,
         });
       }
 
@@ -906,13 +962,13 @@ async function startServer() {
           return res.status(401).json({
             success: false,
             matchScore,
-            message: `Wajah Anda tidak cocok dengan Face ID terdaftar milik "${targetUser.username}" (Skor: ${Math.round(matchScore * 100)}%, min 65%). Pastikan wajah menghadap lurus ke kamera dan pencahayaan jelas.`,
+            message: `Wajah Anda tidak cocok dengan Face ID terdaftar milik "${targetUser.username}" (Skor: ${Math.round(matchScore * 100)}%, min ${Math.round(FACE_ID_MATCH_THRESHOLD * 100)}%). Pastikan wajah menghadap lurus ke kamera dan pencahayaan jelas.`,
           });
         }
       }
 
-      // KASUS 2: Pindai Langsung Face ID (1-Klik Scan)
-      // Pencocokan ketat terhadap seluruh pengguna di database
+      // KASUS 2: Pindai Langsung Face ID Murni (Login Otomatis Tanpa Username & Tanpa No Telp)
+      // Pencocokan super akurat terhadap seluruh pengguna di database berdasarkan biometrik wajah
       const allRegistered = await getAllUsers();
       const candidateList = allRegistered.length > 0 ? allRegistered : users;
       const usersWithFace = candidateList.filter(
@@ -922,36 +978,38 @@ async function startServer() {
       if (usersWithFace.length === 0) {
         return res.status(404).json({
           success: false,
-          message: "Belum ada akun dengan Face ID di database. Silakan daftar akun baru terlebih dahulu.",
+          message: "Belum ada akun dengan rekaman Face ID di database. Silakan daftar akun baru terlebih dahulu.",
         });
       }
 
-      let bestUser: any = null;
-      let highestScore = 0;
-      let secondHighestScore = 0;
-
-      for (const cand of usersWithFace) {
+      // Hitung skor kecocokan biometrik terhadap setiap pengguna terdaftar
+      const scoredCandidates = usersWithFace.map((cand) => {
         const score = calculateFaceMatchScore(serializedDescriptor, cand.faceDescriptor!);
-        if (score > highestScore) {
-          secondHighestScore = highestScore;
-          highestScore = score;
-          bestUser = cand;
-        } else if (score > secondHighestScore) {
-          secondHighestScore = score;
-        }
-      }
+        return { user: cand, score };
+      });
+
+      scoredCandidates.sort((a, b) => b.score - a.score);
+
+      const top = scoredCandidates[0];
+      const runnerUp = scoredCandidates[1];
+      const highestScore = top ? top.score : 0;
+      const secondHighestScore = runnerUp ? runnerUp.score : 0;
+      const bestUser = top ? top.user : null;
 
       console.log(
-        `[Face ID Direct Scan] Highest: ${(highestScore * 100).toFixed(1)}% (${bestUser?.username}), Runner-up: ${(secondHighestScore * 100).toFixed(1)}%`
+        `[Face ID Direct Scan] Peringkat 1: ${(highestScore * 100).toFixed(1)}% (${bestUser?.username}), Peringkat 2: ${(secondHighestScore * 100).toFixed(1)}% (${runnerUp?.user?.username || "tidak ada"})`
       );
 
-      // Kriteria ketat agar akun TIDAK TERTUKAR:
-      // Harus skor tinggi >= FACE_ID_HIGH_CONFIDENCE_THRESHOLD (0.72) dan jarak yang jelas dari runner-up
-      const isDistinctMatch =
-        highestScore >= FACE_ID_HIGH_CONFIDENCE_THRESHOLD &&
-        (usersWithFace.length === 1 || highestScore - secondHighestScore >= 0.05);
+      // Kriteria Super Akurat:
+      // 1. Jika hanya ada 1 pengguna dengan Face ID: cukup skor >= FACE_ID_MATCH_THRESHOLD (0.52)
+      // 2. Jika ada multi pengguna: skor tertinggi harus >= FACE_ID_MATCH_THRESHOLD (0.52) DAN
+      //    (selisih terhadap peringkat 2 minimal 0.03 ATAU skor sangat tinggi >= 0.65)
+      const isAccurateMatch =
+        bestUser &&
+        highestScore >= FACE_ID_MATCH_THRESHOLD &&
+        (usersWithFace.length === 1 || highestScore - secondHighestScore >= 0.03 || highestScore >= 0.65);
 
-      if (isDistinctMatch && bestUser) {
+      if (isAccurateMatch && bestUser) {
         const safeUser = {
           id: bestUser.id,
           username: bestUser.username,
@@ -968,23 +1026,17 @@ async function startServer() {
         return res.json({
           success: true,
           matchScore: highestScore,
-          message: `Face ID Teridentifikasi (${Math.round(highestScore * 100)}%)! Selamat datang, ${bestUser.username}.`,
+          message: `Face ID Cocok (${Math.round(highestScore * 100)}%)! Selamat datang kembali, ${bestUser.username}.`,
           user: safeUser,
         });
       }
 
-      // Jika skor mendekati tapi ambigu, minta ketik username/no hp untuk verifikasi pasti
-      if (highestScore >= 0.58 && bestUser) {
-        return res.status(400).json({
-          success: false,
-          message: `Wajah terdeteksi mirip (${Math.round(highestScore * 100)}%). Untuk keamanan agar akun tidak tertukar, silakan masukkan nama atau No HP Anda lalu klik Pindai.`,
-        });
-      }
-
+      // Wajah tidak cocok dengan akun siapapun dengan tingkat keyakinan yang cukup
       return res.status(401).json({
         success: false,
         matchScore: highestScore,
-        message: "Wajah tidak teridentifikasi pada database akun. Silakan coba lagi atau daftar akun baru.",
+        message:
+          "Wajah Anda belum teridentifikasi pada akun manapun. Pastikan wajah tegak lurus ke kamera dengan pencahayaan yang cukup, atau daftar akun baru.",
       });
     } catch (err: any) {
       console.error("[Face ID Login Error]", err);
@@ -1079,15 +1131,31 @@ async function startServer() {
       const isPhoneChanged =
         cleanNewPhone !== user.phone && normalizePhone(cleanNewPhone) !== normalizePhone(user.phone);
 
-      // Cek apakah username sudah dipakai pengguna lain
+      // Cek apakah username sudah dipakai pengguna lain (Username tidak boleh ada yang sama)
       if (isUsernameChanged) {
+        try {
+          const existingTurso = await getUserByUsernameOrPhone(cleanUsername);
+          if (
+            existingTurso &&
+            existingTurso.id !== user.id &&
+            existingTurso.username.trim().toLowerCase() === cleanUsername.toLowerCase()
+          ) {
+            return res.status(400).json({
+              success: false,
+              message: `Nama/Username "${cleanUsername}" sudah dipakai oleh anggota lain. Username tidak boleh ada yang sama.`,
+            });
+          }
+        } catch (tursoErr) {
+          console.warn("[Update Profile Turso Check Warning]", tursoErr);
+        }
+
         const existingUsername = users.find(
-          (u) => u.id !== user.id && u.username.toLowerCase() === cleanUsername.toLowerCase()
+          (u) => u.id !== user.id && u.username.trim().toLowerCase() === cleanUsername.toLowerCase()
         );
         if (existingUsername) {
           return res.status(400).json({
             success: false,
-            message: `Nama/Username "${cleanUsername}" sudah dipakai oleh anggota lain.`,
+            message: `Nama/Username "${cleanUsername}" sudah dipakai oleh anggota lain. Username tidak boleh ada yang sama.`,
           });
         }
       }

@@ -1,7 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Gem,
-  User as UserIcon,
   Camera,
   ArrowRight,
   AlertCircle,
@@ -10,6 +8,7 @@ import {
   RefreshCw,
   Lock,
   Sparkles,
+  UserCheck,
 } from "lucide-react";
 import { User as UserType } from "../types";
 import { extractFaceDescriptorFromCanvas } from "../utils/faceIdEngine";
@@ -26,26 +25,50 @@ export const LoginView: React.FC<Props> = ({
   onNavigateToRegister,
   lockedUser,
 }) => {
-  const [username, setUsername] = useState(lockedUser?.username || "");
   const [cameraActive, setCameraActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [identifiedUser, setIdentifiedUser] = useState<UserType | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
+  // Otomatis aktifkan kamera saat halaman login dimuat untuk pengalaman Face ID instan
   useEffect(() => {
-    if (lockedUser?.username) {
-      setUsername(lockedUser.username);
-    }
-  }, [lockedUser]);
-
-  useEffect(() => {
+    startCamera();
     return () => {
       stopCamera();
     };
   }, []);
+
+  // Hubungkan media stream ke elemen video saat cameraActive berubah
+  useEffect(() => {
+    if (cameraActive && videoRef.current && mediaStreamRef.current) {
+      const video = videoRef.current;
+      if (video.srcObject !== mediaStreamRef.current) {
+        video.srcObject = mediaStreamRef.current;
+      }
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
+      video.muted = true;
+      video.play().catch((e) => console.warn("[Login Video Play Effect Warning]", e));
+    }
+  }, [cameraActive]);
+
+  // Callback ref untuk memastikan video langsung menerima media stream saat elemen di-render
+  const attachVideoRef = (el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && mediaStreamRef.current) {
+      if (el.srcObject !== mediaStreamRef.current) {
+        el.srcObject = mediaStreamRef.current;
+      }
+      el.setAttribute("playsinline", "true");
+      el.setAttribute("webkit-playsinline", "true");
+      el.muted = true;
+      el.play().catch((e) => console.warn("[Login Video Play Callback Warning]", e));
+    }
+  };
 
   const startCamera = async () => {
     setErrorMessage(null);
@@ -56,25 +79,45 @@ export const LoginView: React.FC<Props> = ({
         );
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 480 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+      // Ambil stream dengan fallback constraints
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 480, max: 720 },
+            height: { ideal: 480, max: 720 },
+          },
+          audio: false,
+        });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: false,
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+      }
 
       mediaStreamRef.current = stream;
+      setCameraActive(true);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("webkit-playsinline", "true");
+        videoRef.current.muted = true;
         videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.warn("[Login Camera Warning]", err);
       setErrorMessage(
-        "Kamera tidak dapat diakses langsung. Mohon izinkan akses kamera perangkat Anda untuk pemindaian Face ID biometrik yang aman."
+        "Kamera belum aktif. Klik tombol 'Buka Kamera Face ID' di bawah dan izinkan akses kamera perangkat Anda untuk masuk."
       );
       setCameraActive(false);
     }
@@ -85,10 +128,13 @@ export const LoginView: React.FC<Props> = ({
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setCameraActive(false);
   };
 
-  // Eksekusi Verifikasi Face ID ke Server
+  // Eksekusi Verifikasi Face ID ke Server Murni Tanpa Input Username / No HP
   const processFaceLogin = async (descriptor: any, photoUrl?: string) => {
     setIsScanning(true);
     setErrorMessage(null);
@@ -98,7 +144,8 @@ export const LoginView: React.FC<Props> = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          usernameOrPhone: username.trim() || undefined,
+          // Jika sesi terkunci untuk pengguna tertentu, berikan petunjuk opsional
+          usernameOrPhone: lockedUser?.username ? lockedUser.username : undefined,
           facePhoto: photoUrl,
           faceDescriptor: descriptor,
         }),
@@ -107,15 +154,16 @@ export const LoginView: React.FC<Props> = ({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || "Verifikasi Face ID tidak berhasil.");
+        throw new Error(data.message || "Wajah tidak cocok dengan akun terdaftar manapun.");
       }
 
-      setSuccessNotice(data.message || `Face ID Cocok! Selamat datang kembali.`);
+      setIdentifiedUser(data.user);
+      setSuccessNotice(data.message || `Face ID Cocok! Selamat datang kembali, ${data.user.username}.`);
       stopCamera();
 
       setTimeout(() => {
         onLoginSuccess(data.user);
-      }, 700);
+      }, 800);
     } catch (err: any) {
       setErrorMessage(err.message || "Gagal masuk menggunakan Face ID.");
     } finally {
@@ -124,12 +172,19 @@ export const LoginView: React.FC<Props> = ({
   };
 
   const handleCaptureAndLogin = async () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current) {
+      await startCamera();
+      return;
+    }
     setIsScanning(true);
     setErrorMessage(null);
 
     try {
       const video = videoRef.current;
+      if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+        throw new Error("Kamera masih memuat gambar, mohon tunggu 1 detik lalu klik lagi.");
+      }
+
       const canvas = document.createElement("canvas");
       canvas.width = 320;
       canvas.height = 320;
@@ -137,9 +192,16 @@ export const LoginView: React.FC<Props> = ({
 
       if (!ctx) throw new Error("Gagal menginisialisasi canvas");
 
+      // Potong kotak tengah (center-crop) agar proporsi wajah 100% konsisten dengan saat mendaftar
+      const vWidth = video.videoWidth;
+      const vHeight = video.videoHeight;
+      const minDim = Math.min(vWidth, vHeight);
+      const cropX = (vWidth - minDim) / 2;
+      const cropY = (vHeight - minDim) / 2;
+
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, cropX, cropY, minDim, minDim, 0, 0, canvas.width, canvas.height);
 
       const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
       const descriptor = extractFaceDescriptorFromCanvas(canvas);
@@ -147,7 +209,7 @@ export const LoginView: React.FC<Props> = ({
       await processFaceLogin(descriptor, dataUrl);
     } catch (err: any) {
       console.error("[Login Snapshot Error]", err);
-      setErrorMessage("Gagal menganalisis wajah dari kamera. Silakan coba lagi.");
+      setErrorMessage(err.message || "Gagal menganalisis wajah dari kamera. Silakan coba lagi.");
       setIsScanning(false);
     }
   };
@@ -165,7 +227,7 @@ export const LoginView: React.FC<Props> = ({
           Masuk dengan Face ID
         </h1>
         <p className="text-xs text-slate-400 mt-1">
-          Akses aman biometrik Komunitas Pecinta Batu Mulia Nusantara
+          Cukup pindai wajah — masuk otomatis tanpa ketik username atau nomor HP
         </p>
       </div>
 
@@ -183,7 +245,7 @@ export const LoginView: React.FC<Props> = ({
                 Sesi Terkunci Otomatis (5 Menit Tidak Aktif)
               </h4>
               <p className="text-xs text-amber-300/90 mt-0.5 leading-relaxed">
-                Aplikasi mendeteksi perpindahan layar ke aplikasi lain selama 5 menit. Silakan pindai Face ID Anda untuk masuk kembali sebagai{" "}
+                Pindai Face ID Anda untuk melanjutkan sesi akun{" "}
                 <strong className="text-white underline">{lockedUser.username}</strong>.
               </p>
             </div>
@@ -208,50 +270,48 @@ export const LoginView: React.FC<Props> = ({
             className="mb-4 bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs rounded-xl p-3 flex items-start gap-2 animate-fade-in"
           >
             <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
-            <span className="flex-1 leading-relaxed">{successNotice}</span>
+            <div className="flex-1">
+              <span className="font-semibold block">{successNotice}</span>
+              {identifiedUser && (
+                <div className="flex items-center gap-2 mt-1.5 text-emerald-300">
+                  {identifiedUser.avatar && (
+                    <img
+                      src={identifiedUser.avatar}
+                      alt={identifiedUser.username}
+                      className="w-5 h-5 rounded-full object-cover border border-emerald-400"
+                    />
+                  )}
+                  <span className="text-xs font-bold">Akun: {identifiedUser.username}</span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Field Nama / Nomor HP untuk Memastikan Akun Tidak Tertukar */}
-        {/* "Pastikan database face id dan username sama agar saat login tidak tertukar dengan username lain" */}
-        <div className="mb-4">
-          <label
-            htmlFor="input-login-username"
-            className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between"
-          >
-            <span>Nama Lengkap atau Nomor HP</span>
-            <span className="text-[11px] text-emerald-400 font-normal">
-              Pencocokan 100% Akurat
-            </span>
-          </label>
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-              <UserIcon className="w-4 h-4" />
-            </div>
-            <input
-              id="input-login-username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Ketik Nama atau No HP akun Anda"
-              className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950/70 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all"
-            />
+        {/* Informational Badge */}
+        <div className="mb-4 bg-slate-950/60 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-slate-300">
+            <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>Verifikasi Biometrik Super Akurat</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Menjamin Face ID mencocokkan akun Anda secara tepat tanpa tertukar
-          </p>
+          <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-0.5 rounded-full">
+            100% Bebas Tertukar
+          </span>
         </div>
 
         {/* Face ID Viewfinder Box */}
-        <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-3 min-h-[230px] mb-4">
+        <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex flex-col items-center justify-center p-3 min-h-[250px] mb-4">
           {cameraActive ? (
             <div className="relative w-full flex flex-col items-center">
-              <div className="relative w-56 h-56 rounded-full overflow-hidden border-2 border-emerald-400/90 shadow-inner bg-black flex items-center justify-center">
+              <div className="relative w-56 h-56 rounded-full overflow-hidden border-2 border-emerald-400/90 shadow-[0_0_20px_rgba(16,185,129,0.2)] bg-black flex items-center justify-center">
                 <video
-                  ref={videoRef}
+                  ref={attachVideoRef}
                   playsInline
                   muted
                   autoPlay
+                  onLoadedMetadata={(e) => {
+                    (e.target as HTMLVideoElement).play().catch(() => {});
+                  }}
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
                 {/* Oval Biometric Target */}
@@ -259,33 +319,44 @@ export const LoginView: React.FC<Props> = ({
                 {/* Scanning Laser Beam */}
                 <div className="absolute top-1/2 left-0 right-0 h-1 bg-emerald-400 shadow-[0_0_12px_#10b981] animate-bounce pointer-events-none" />
               </div>
-              <p className="text-xs text-emerald-300 font-semibold mt-2.5 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                Posisikan wajah Anda tegak lurus di lingkaran
+
+              <p className="text-xs text-emerald-300 font-semibold mt-3 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+                Posisikan wajah Anda tegak lurus di dalam lingkaran
               </p>
 
-              <div className="flex items-center gap-2 mt-3">
+              <div className="w-full flex flex-col gap-2 mt-4">
                 <button
                   id="btn-scan-and-login"
                   type="button"
                   onClick={handleCaptureAndLogin}
                   disabled={isScanning}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-900/30 transition-all cursor-pointer disabled:opacity-50"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40 transition-all cursor-pointer disabled:opacity-50"
                 >
                   {isScanning ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <RefreshCw className="w-5 h-5 animate-spin" />
                   ) : (
-                    <ScanFace className="w-4 h-4" />
+                    <ScanFace className="w-5 h-5" />
                   )}
-                  {isScanning ? "Memverifikasi Biometrik..." : "Pindai Wajah & Masuk"}
+                  {isScanning ? "Menganalisis Biometrik Wajah..." : "Pindai Wajah & Masuk Sekarang"}
                 </button>
-                <button
-                  type="button"
-                  onClick={stopCamera}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-2.5 rounded-xl transition-colors cursor-pointer"
-                >
-                  Tutup
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={startCamera}
+                    className="text-xs text-slate-400 hover:text-slate-200 transition-colors cursor-pointer py-1"
+                  >
+                    Segarkan Kamera
+                  </button>
+                  <span className="text-slate-700">•</span>
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    className="text-xs text-slate-400 hover:text-slate-200 transition-colors cursor-pointer py-1"
+                  >
+                    Matikan Kamera
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -297,17 +368,17 @@ export const LoginView: React.FC<Props> = ({
                 Pindai Face ID Biometrik Langsung
               </h4>
               <p className="text-xs text-slate-400 max-w-xs mt-1 mb-4">
-                Demi keamanan akun, pemindaian wajah dilakukan secara langsung menggunakan kamera real-time (tanpa upload foto).
+                Login otomatis dengan mengenali wajah Anda. Wajah langsung dipindai real-time tanpa mengetik apapun.
               </p>
 
               <button
                 id="btn-open-login-camera"
                 type="button"
                 onClick={startCamera}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-md shadow-emerald-950/30 transition-all cursor-pointer"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-6 py-3 rounded-xl flex items-center gap-2 shadow-md shadow-emerald-950/30 transition-all cursor-pointer"
               >
                 <Camera className="w-4 h-4" />
-                Buka Kamera Face ID Langsung
+                Buka Kamera Face ID
               </button>
             </div>
           )}

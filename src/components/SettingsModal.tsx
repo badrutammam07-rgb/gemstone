@@ -27,11 +27,45 @@ export const SettingsModal: React.FC<Props> = ({
   const [newUsername, setNewUsername] = useState(user.username);
   const [newPhone, setNewPhone] = useState(user.phone);
 
+  const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
+  const [usernameFeedback, setUsernameFeedback] = useState<string>("");
+  const checkTimeoutRef = React.useRef<any>(null);
+
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleUsernameChange = (val: string) => {
+    setNewUsername(val);
+    setErrorMessage(null);
+    if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
+
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.toLowerCase() === user.username.trim().toLowerCase()) {
+      setUsernameStatus("idle");
+      setUsernameFeedback("");
+      return;
+    }
+
+    checkTimeoutRef.current = setTimeout(async () => {
+      setUsernameStatus("checking");
+      try {
+        const res = await fetch(`/api/auth/check-username?username=${encodeURIComponent(trimmed)}`);
+        const data = await res.json();
+        if (data.available) {
+          setUsernameStatus("available");
+          setUsernameFeedback(`Username "${trimmed}" tersedia.`);
+        } else {
+          setUsernameStatus("taken");
+          setUsernameFeedback(data.message || `Username "${trimmed}" sudah digunakan oleh orang lain.`);
+        }
+      } catch {
+        setUsernameStatus("idle");
+      }
+    }, 400);
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +74,11 @@ export const SettingsModal: React.FC<Props> = ({
 
     if (!newUsername.trim()) {
       setErrorMessage("Nama lengkap / username wajib diisi.");
+      return;
+    }
+
+    if (usernameStatus === "taken") {
+      setErrorMessage("Username ini sudah digunakan oleh akun lain. Username tidak boleh ada yang sama!");
       return;
     }
 
@@ -124,12 +163,27 @@ export const SettingsModal: React.FC<Props> = ({
 
           {/* 1. Nama Lengkap / Username */}
           <div>
-            <label
-              htmlFor="settings-username"
-              className="block text-xs font-semibold text-slate-300 mb-1.5"
-            >
-              Nama Lengkap / Username
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label
+                htmlFor="settings-username"
+                className="block text-xs font-semibold text-slate-300"
+              >
+                Nama Lengkap / Username
+              </label>
+              {usernameStatus === "checking" && (
+                <span className="text-[11px] text-slate-400">Memeriksa...</span>
+              )}
+              {usernameStatus === "available" && (
+                <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
+                  <CheckCircle2 className="w-3 h-3" /> {usernameFeedback}
+                </span>
+              )}
+              {usernameStatus === "taken" && (
+                <span className="text-[11px] text-red-400 flex items-center gap-1 font-semibold">
+                  <AlertCircle className="w-3 h-3" /> {usernameFeedback}
+                </span>
+              )}
+            </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
                 <UserIcon className="w-4 h-4" />
@@ -138,14 +192,20 @@ export const SettingsModal: React.FC<Props> = ({
                 id="settings-username"
                 type="text"
                 value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
+                onChange={(e) => handleUsernameChange(e.target.value)}
                 placeholder="Masukkan nama lengkap"
-                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all"
+                className={`w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all ${
+                  usernameStatus === "taken"
+                    ? "border-red-500 focus:ring-red-500"
+                    : usernameStatus === "available"
+                    ? "border-emerald-500/80 focus:ring-emerald-500"
+                    : "border-slate-700 focus:ring-emerald-500"
+                }`}
                 required
               />
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              Nama ini akan ditampilkan pada katalog dan transaksi komunitas
+              Username tidak boleh ada yang sama dengan pengguna lain
             </p>
           </div>
 

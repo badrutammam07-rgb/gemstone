@@ -25,6 +25,10 @@ export const RegisterView: React.FC<Props> = ({
   const [username, setUsername] = useState("");
   const [phone, setPhone] = useState("");
 
+  // Username validation state (Memastikan username tidak boleh ada yang sama)
+  const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
+  const [usernameFeedback, setUsernameFeedback] = useState<string>("");
+
   // Face ID Biometric states
   const [cameraActive, setCameraActive] = useState(false);
   const [facePhoto, setFacePhoto] = useState<string | null>(null);
@@ -37,12 +41,83 @@ export const RegisterView: React.FC<Props> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const checkTimeoutRef = useRef<any>(null);
+
   // Stop camera on unmount
   useEffect(() => {
     return () => {
       stopCamera();
+      if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
     };
   }, []);
+
+  // Hubungkan media stream ke elemen video saat cameraActive berubah
+  useEffect(() => {
+    if (cameraActive && videoRef.current && mediaStreamRef.current) {
+      const video = videoRef.current;
+      if (video.srcObject !== mediaStreamRef.current) {
+        video.srcObject = mediaStreamRef.current;
+      }
+      video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
+      video.muted = true;
+      video.play().catch((e) => console.warn("[Register Video Play Effect Warning]", e));
+    }
+  }, [cameraActive]);
+
+  // Callback ref untuk memastikan elemen video langsung terhubung saat dimuat di DOM
+  const attachVideoRef = (el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && mediaStreamRef.current) {
+      if (el.srcObject !== mediaStreamRef.current) {
+        el.srcObject = mediaStreamRef.current;
+      }
+      el.setAttribute("playsinline", "true");
+      el.setAttribute("webkit-playsinline", "true");
+      el.muted = true;
+      el.play().catch((e) => console.warn("[Register Video Play Callback Warning]", e));
+    }
+  };
+
+  // Cek ketersediaan username ke server agar tidak ada username kembar
+  const checkUsernameAvailability = async (targetUsername: string) => {
+    const trimmed = targetUsername.trim();
+    if (!trimmed || trimmed.length < 2) {
+      setUsernameStatus("idle");
+      setUsernameFeedback("");
+      return;
+    }
+
+    setUsernameStatus("checking");
+    try {
+      const res = await fetch(`/api/auth/check-username?username=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (data.available) {
+        setUsernameStatus("available");
+        setUsernameFeedback(data.message || `Username "${trimmed}" dapat digunakan.`);
+      } else {
+        setUsernameStatus("taken");
+        setUsernameFeedback(data.message || `Username "${trimmed}" sudah digunakan.`);
+      }
+    } catch {
+      setUsernameStatus("idle");
+    }
+  };
+
+  const handleUsernameChange = (val: string) => {
+    setUsername(val);
+    if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
+    const trimmed = val.trim();
+    if (!trimmed) {
+      setUsernameStatus("idle");
+      setUsernameFeedback("");
+      return;
+    }
+
+    checkTimeoutRef.current = setTimeout(() => {
+      checkUsernameAvailability(trimmed);
+    }, 400);
+  };
 
   const startCamera = async () => {
     setErrorMessage(null);
@@ -53,21 +128,42 @@ export const RegisterView: React.FC<Props> = ({
         );
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 480 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+      // Ambil stream dengan toleransi fallback jika ideal constraints tidak didukung browser tertentu
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 480, max: 720 },
+            height: { ideal: 480, max: 720 },
+          },
+          audio: false,
+        });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: false,
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+      }
 
       mediaStreamRef.current = stream;
+      setCameraActive(true);
+
+      // Play video jika ref sudah siap
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("webkit-playsinline", "true");
+        videoRef.current.muted = true;
         videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.warn("[Register Camera Warning]", err);
       setErrorMessage(
@@ -82,6 +178,9 @@ export const RegisterView: React.FC<Props> = ({
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setCameraActive(false);
   };
 
@@ -92,6 +191,10 @@ export const RegisterView: React.FC<Props> = ({
 
     try {
       const video = videoRef.current;
+      if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+        throw new Error("Kamera sedang memuat gambar, silakan tunggu 1 detik lalu tekan lagi.");
+      }
+
       const canvas = document.createElement("canvas");
       canvas.width = 320;
       canvas.height = 320;
@@ -99,10 +202,17 @@ export const RegisterView: React.FC<Props> = ({
 
       if (!ctx) throw new Error("Gagal menginisialisasi canvas");
 
+      // Potong kotak tengah (center-crop) agar proporsi wajah selalu 1:1 sempurna
+      const vWidth = video.videoWidth;
+      const vHeight = video.videoHeight;
+      const minDim = Math.min(vWidth, vHeight);
+      const cropX = (vWidth - minDim) / 2;
+      const cropY = (vHeight - minDim) / 2;
+
       // Cerminkan horizontal agar seperti cermin alami
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, cropX, cropY, minDim, minDim, 0, 0, canvas.width, canvas.height);
 
       const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
       const descriptor = extractFaceDescriptorFromCanvas(canvas);
@@ -112,7 +222,7 @@ export const RegisterView: React.FC<Props> = ({
       stopCamera();
     } catch (err: any) {
       console.error("[Face Capture Error]", err);
-      setErrorMessage("Gagal menganalisis biometrik wajah. Silakan coba lagi.");
+      setErrorMessage(err.message || "Gagal menganalisis biometrik wajah. Silakan coba lagi.");
     } finally {
       setIsProcessingFace(false);
     }
@@ -124,6 +234,11 @@ export const RegisterView: React.FC<Props> = ({
 
     if (!username.trim()) {
       setErrorMessage("Nama lengkap / username wajib diisi.");
+      return;
+    }
+
+    if (usernameStatus === "taken") {
+      setErrorMessage("Username ini sudah terdaftar. Username tidak boleh ada yang sama!");
       return;
     }
 
@@ -159,6 +274,10 @@ export const RegisterView: React.FC<Props> = ({
       }
 
       if (!response.ok || !data.success) {
+        if (data.code === "DUPLICATE_USERNAME") {
+          setUsernameStatus("taken");
+          setUsernameFeedback(data.message);
+        }
         throw new Error(data.message || "Pendaftaran akun gagal.");
       }
 
@@ -237,12 +356,29 @@ export const RegisterView: React.FC<Props> = ({
         <form onSubmit={handleRegister} className="space-y-4">
           {/* 1. Nama Lengkap */}
           <div>
-            <label
-              htmlFor="input-register-username"
-              className="block text-xs font-semibold text-slate-300 mb-1.5"
-            >
-              Nama Lengkap
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label
+                htmlFor="input-register-username"
+                className="block text-xs font-semibold text-slate-300"
+              >
+                Nama Lengkap / Username
+              </label>
+              {usernameStatus === "checking" && (
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Memeriksa keunikan...
+                </span>
+              )}
+              {usernameStatus === "available" && (
+                <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> {usernameFeedback}
+                </span>
+              )}
+              {usernameStatus === "taken" && (
+                <span className="text-[11px] text-red-400 font-semibold flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {usernameFeedback}
+                </span>
+              )}
+            </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
                 <UserIcon className="w-4 h-4" />
@@ -251,12 +387,21 @@ export const RegisterView: React.FC<Props> = ({
                 id="input-register-username"
                 type="text"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Masukkan nama lengkap Anda"
-                className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950/70 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all"
+                onChange={(e) => handleUsernameChange(e.target.value)}
+                placeholder="Masukkan nama lengkap unik Anda"
+                className={`w-full pl-10 pr-4 py-2.5 text-sm bg-slate-950/70 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-slate-100 placeholder:text-slate-500 transition-all ${
+                  usernameStatus === "taken"
+                    ? "border-red-500 focus:ring-red-500"
+                    : usernameStatus === "available"
+                    ? "border-emerald-500/80 focus:ring-emerald-500"
+                    : "border-slate-700 focus:ring-emerald-500"
+                }`}
                 required
               />
             </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Username wajib unik dan tidak boleh ada yang sama dengan anggota lain.
+            </p>
           </div>
 
           {/* 2. Nomor Telepon */}
@@ -339,10 +484,13 @@ export const RegisterView: React.FC<Props> = ({
                 <div className="relative w-full flex flex-col items-center">
                   <div className="relative w-56 h-56 rounded-full overflow-hidden border-2 border-emerald-400/80 shadow-inner bg-black flex items-center justify-center">
                     <video
-                      ref={videoRef}
+                      ref={attachVideoRef}
                       playsInline
                       muted
                       autoPlay
+                      onLoadedMetadata={(e) => {
+                        (e.target as HTMLVideoElement).play().catch(() => {});
+                      }}
                       className="w-full h-full object-cover scale-x-[-1]"
                     />
                     {/* Oval Biometric Guide */}
