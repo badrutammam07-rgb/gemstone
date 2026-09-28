@@ -9,13 +9,9 @@ import {
   ShieldCheck,
   RefreshCw,
   ScanFace,
-  Upload,
 } from "lucide-react";
 import { User as UserType } from "../types";
-import {
-  extractFaceDescriptorFromCanvas,
-  extractFaceDescriptorFromDataUrl,
-} from "../utils/faceIdEngine";
+import { extractFaceDescriptorFromCanvas } from "../utils/faceIdEngine";
 
 interface Props {
   onRegisterSuccess: (user: UserType) => void;
@@ -41,8 +37,6 @@ export const RegisterView: React.FC<Props> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   // Stop camera on unmount
   useEffect(() => {
     return () => {
@@ -55,7 +49,7 @@ export const RegisterView: React.FC<Props> = ({
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error(
-          "Kamera tidak didukung oleh browser Anda. Silakan unggah foto wajah selfie."
+          "Kamera tidak didukung oleh browser Anda. Perekaman Face ID memerlukan akses kamera langsung demi keamanan."
         );
       }
 
@@ -77,7 +71,7 @@ export const RegisterView: React.FC<Props> = ({
     } catch (err: any) {
       console.warn("[Register Camera Warning]", err);
       setErrorMessage(
-        "Kamera tidak dapat diakses langsung. Anda dapat mengunggah foto selfie wajah jelas melalui tombol di bawah."
+        "Kamera tidak dapat diakses langsung. Mohon izinkan akses kamera perangkat untuk pemindaian biometrik Face ID langsung demi keamanan akun."
       );
       setCameraActive(false);
     }
@@ -122,41 +116,6 @@ export const RegisterView: React.FC<Props> = ({
     } finally {
       setIsProcessingFace(false);
     }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setErrorMessage("Silakan pilih berkas gambar foto selfie yang valid.");
-      return;
-    }
-
-    setIsProcessingFace(true);
-    setErrorMessage(null);
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const dataUrl = event.target?.result as string;
-        const descriptor = await extractFaceDescriptorFromDataUrl(dataUrl);
-
-        setFacePhoto(dataUrl);
-        setFaceDescriptor(descriptor);
-        stopCamera();
-      } catch (err: any) {
-        console.error("[File Face Parse Error]", err);
-        setErrorMessage("Gagal mengekstraksi biometrik wajah dari foto yang diunggah.");
-      } finally {
-        setIsProcessingFace(false);
-      }
-    };
-    reader.onerror = () => {
-      setIsProcessingFace(false);
-      setErrorMessage("Gagal membaca file gambar.");
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -424,39 +383,21 @@ export const RegisterView: React.FC<Props> = ({
                     <ScanFace className="w-8 h-8" />
                   </div>
                   <h4 className="text-sm font-semibold text-slate-200">
-                    Perekaman Biometrik Wajah
+                    Perekaman Biometrik Wajah Langsung
                   </h4>
                   <p className="text-xs text-slate-400 max-w-xs mt-1 mb-4">
-                    Gunakan kamera perangkat Anda untuk memindai wajah langsung. Data Face ID akan dienkripsi di database.
+                    Demi keamanan tingkat tinggi, pemindaian wajah wajib dilakukan secara langsung melalui kamera (tanpa upload foto).
                   </p>
 
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <button
-                      id="btn-start-face-camera"
-                      type="button"
-                      onClick={startCamera}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-950/20 transition-all cursor-pointer"
-                    >
-                      <Camera className="w-3.5 h-3.5" />
-                      Buka Kamera & Pindai Wajah
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      Upload Selfie
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                  </div>
+                  <button
+                    id="btn-start-face-camera"
+                    type="button"
+                    onClick={startCamera}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-md shadow-emerald-950/20 transition-all cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Buka Kamera & Pindai Wajah Langsung
+                  </button>
                 </div>
               )}
             </div>
