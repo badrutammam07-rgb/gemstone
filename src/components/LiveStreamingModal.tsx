@@ -47,6 +47,7 @@ export const LiveStreamingModal: React.FC<Props> = ({
   const [viewerCount, setViewerCount] = useState<number>(1);
   const [comments, setComments] = useState<LiveStreamComment[]>([]);
   const [commentInput, setCommentInput] = useState("");
+  const [pinnedComment, setPinnedComment] = useState<LiveStreamComment | null>(null);
   const [pinnedProduct, setPinnedProduct] = useState<LivePinnedProduct | null>(
     initialPinnedCatalog
       ? {
@@ -217,6 +218,7 @@ export const LiveStreamingModal: React.FC<Props> = ({
             setViewerCount(data.stream.viewerCount || 1);
             setComments(data.stream.comments || []);
             setPinnedProduct(data.stream.pinnedProduct || null);
+            setPinnedComment(data.stream.pinnedComment || null);
             break;
           }
 
@@ -245,6 +247,11 @@ export const LiveStreamingModal: React.FC<Props> = ({
 
           case "product_pinned": {
             setPinnedProduct(data.product);
+            break;
+          }
+
+          case "comment_pinned": {
+            setPinnedComment(data.comment || null);
             break;
           }
 
@@ -408,6 +415,68 @@ export const LiveStreamingModal: React.FC<Props> = ({
     }
   };
 
+  // Pin a comment during live (Khusus Host)
+  const handlePinComment = async (comment: LiveStreamComment) => {
+    if (!streamId || !isHost) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "pin_comment",
+          comment,
+        })
+      );
+    }
+    try {
+      await fetch("/api/live/pin-comment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId,
+          hostId: currentUser.id,
+          comment,
+        }),
+      });
+    } catch (e) {
+      console.error("Pin comment error:", e);
+    }
+    setPinnedComment(comment);
+  };
+
+  // Unpin comment
+  const handleUnpinComment = async () => {
+    if (!streamId || !isHost) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "pin_comment",
+          comment: null,
+        })
+      );
+    }
+    try {
+      await fetch("/api/live/pin-comment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId,
+          hostId: currentUser.id,
+          comment: null,
+        }),
+      });
+    } catch (e) {
+      console.error("Unpin comment error:", e);
+    }
+    setPinnedComment(null);
+  };
+
+  const handleTogglePinComment = (comment: LiveStreamComment) => {
+    if (pinnedComment?.id === comment.id) {
+      handleUnpinComment();
+    } else {
+      handlePinComment(comment);
+    }
+  };
+
   // Send a comment in live room
   const handleSendComment = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -439,102 +508,49 @@ export const LiveStreamingModal: React.FC<Props> = ({
     };
   }, [propStreamId]);
 
+  // Send reaction (Heart / Like) in live room
+  const handleSendReaction = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(
+      JSON.stringify({
+        type: "send_comment",
+        message: "❤️ Menyukai siaran live ini",
+      })
+    );
+  };
+
   const isHost = streamInfo?.hostId === currentUser.id || (!streamInfo && isHostMode);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-0 md:p-4">
-      <div className="relative w-full h-full md:max-w-4xl md:h-[90vh] bg-slate-950 md:rounded-3xl border border-slate-800 flex flex-col overflow-hidden shadow-2xl">
-        {/* Top Floating Header */}
-        <div className="absolute top-0 left-0 right-0 z-30 p-3 sm:p-4 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/40 to-transparent">
-          {/* Host Info & Live Badge */}
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <img
-                src={streamInfo?.hostAvatar || currentUser.avatar}
-                alt="Host Avatar"
-                className="w-10 h-10 rounded-full object-cover border-2 border-rose-500 shadow-md"
-              />
-              <span className="absolute -bottom-1 -right-1 flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
-              </span>
-            </div>
+    <div className="fixed inset-0 z-50 bg-black w-screen h-screen overflow-hidden flex flex-col select-none">
+      {/* Content Area */}
+      {!isLiveActive && isHost ? (
+        /* Host Pre-Live Setup Form (Scrollable modal mode to never break screen) */
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col my-auto max-h-[95vh] overflow-y-auto scrollbar-none">
+            {/* Close / Cancel Button */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full transition-all cursor-pointer"
+              title="Tutup / Batalkan"
+            >
+              <X className="w-4 h-4" />
+            </button>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white leading-tight drop-shadow-md">
-                  {streamInfo?.hostName || currentUser.username}
-                </h3>
-                <span className="bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-                  <Radio className="w-3 h-3 animate-pulse" /> LIVE
-                </span>
+            <div className="text-center pt-2">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-xl shadow-rose-900/30 mb-4 mx-auto animate-bounce">
+                <Radio className="w-8 h-8 text-white" />
               </div>
-              <p className="text-[11px] text-slate-300 drop-shadow-md line-clamp-1 max-w-[200px] sm:max-w-xs">
-                {streamInfo?.title || streamTitle}
+
+              <h2 className="text-xl font-black text-white mb-2">Mulai Live Streaming Jual Beli</h2>
+              <p className="text-xs text-slate-400 mb-6 leading-relaxed max-w-md mx-auto">
+                Tampilkan batu mulia terbaik Anda secara langsung kepada seluruh anggota komunitas.
+                Layar live akan tampil penuh dengan obrolan interaktif langsung di atas layar.
               </p>
             </div>
-          </div>
 
-          {/* Right: Viewer Count & Actions */}
-          <div className="flex items-center gap-2">
-            {/* Live Viewer Counter */}
-            <div className="bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs text-white font-bold shadow-lg">
-              <Eye className="w-3.5 h-3.5 text-rose-400" />
-              <span>{viewerCount} Penonton</span>
-            </div>
-
-            {/* End Live (for host) or Exit (for viewer) */}
-            {isHost && isLiveActive ? (
-              <button
-                type="button"
-                onClick={handleEndLive}
-                className="bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Akhiri Sesi Live (Data Langsung Dihapus Bersih)"
-              >
-                Akhiri Live
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  stopCamera();
-                  if (wsRef.current) wsRef.current.close();
-                  onClose();
-                }}
-                className="p-2 bg-black/60 hover:bg-black/80 text-white rounded-full border border-white/20 transition-all cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* System Alert Notification */}
-        {systemAlert && (
-          <div className="absolute top-16 left-4 right-4 z-40">
-            <div className="bg-rose-950/90 border border-rose-500/50 text-white text-xs p-3 rounded-xl shadow-2xl flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>{systemAlert}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Content Area */}
-        {!isLiveActive && isHost ? (
-          /* Host Pre-Live Setup Form */
-          <div className="flex-1 flex flex-col justify-center items-center p-6 text-center z-10 max-w-lg mx-auto w-full">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-xl shadow-rose-900/30 mb-4 animate-bounce">
-              <Radio className="w-8 h-8 text-white" />
-            </div>
-
-            <h2 className="text-xl font-black text-white mb-2">Mulai Live Streaming Jual Beli</h2>
-            <p className="text-xs text-slate-400 mb-6 leading-relaxed">
-              Tampilkan batu mulia terbaik Anda secara langsung kepada seluruh anggota komunitas.
-              Penonton dapat melihat batu secara detail, berinteraksi via komentar langsung, dan
-              melihat jumlah penonton aktif.
-            </p>
-
-            <div className="w-full space-y-4 text-left bg-slate-900/90 p-5 rounded-2xl border border-slate-800 mb-6 shadow-xl">
+            <div className="w-full space-y-4 text-left bg-slate-950/80 p-4 sm:p-5 rounded-2xl border border-slate-800/80 mb-6 shadow-xl">
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">
                   Judul Sesi Live Streaming:
@@ -544,7 +560,7 @@ export const LiveStreamingModal: React.FC<Props> = ({
                   value={streamTitle}
                   onChange={(e) => setStreamTitle(e.target.value)}
                   placeholder="Misal: Obral Batu Bacan Doko & Ruby Asli Garansi"
-                  className="w-full bg-slate-950 border border-slate-700 text-sm text-white px-3.5 py-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  className="w-full bg-slate-900 border border-slate-700 text-sm text-white px-3.5 py-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-slate-500"
                 />
               </div>
 
@@ -553,15 +569,15 @@ export const LiveStreamingModal: React.FC<Props> = ({
                   Sematkan Produk Katalog Utama (Opsional):
                 </label>
                 {selectedCatalogToPin ? (
-                  <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-emerald-500/40">
-                    <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-between p-3 bg-slate-900 rounded-xl border border-emerald-500/40">
+                    <div className="flex items-center gap-3 min-w-0">
                       <img
                         src={selectedCatalogToPin.images?.[0] || ""}
                         alt={selectedCatalogToPin.gemType}
-                        className="w-12 h-12 rounded-lg object-cover border border-slate-700"
+                        className="w-12 h-12 rounded-lg object-cover border border-slate-700 shrink-0"
                       />
-                      <div>
-                        <p className="text-xs font-bold text-white">{selectedCatalogToPin.gemType}</p>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{selectedCatalogToPin.gemType}</p>
                         <p className="text-xs font-extrabold text-emerald-400">
                           {selectedCatalogToPin.price}
                         </p>
@@ -570,7 +586,7 @@ export const LiveStreamingModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setSelectedCatalogToPin(null)}
-                      className="text-xs text-slate-400 hover:text-rose-400 p-1"
+                      className="text-xs text-slate-400 hover:text-rose-400 p-1.5 shrink-0 cursor-pointer"
                     >
                       Batal
                     </button>
@@ -579,7 +595,7 @@ export const LiveStreamingModal: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setShowCatalogSelector(true)}
-                    className="w-full py-2.5 px-3 bg-slate-950 border border-dashed border-slate-700 hover:border-emerald-500/60 rounded-xl text-xs text-slate-400 hover:text-emerald-400 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    className="w-full py-2.5 px-3 bg-slate-900 border border-dashed border-slate-700 hover:border-emerald-500/60 rounded-xl text-xs text-slate-400 hover:text-emerald-400 flex items-center justify-center gap-2 transition-all cursor-pointer"
                   >
                     <ShoppingBag className="w-4 h-4" />
                     Pilih batu mulia dari katalog Anda untuk disematkan
@@ -591,9 +607,8 @@ export const LiveStreamingModal: React.FC<Props> = ({
               <div className="bg-emerald-950/40 border border-emerald-500/30 p-3 rounded-xl flex items-start gap-2.5">
                 <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <p className="text-[11px] text-emerald-300 leading-tight">
-                  <strong className="font-semibold">Privasi Terjamin:</strong> Setelah live
-                  diakhiri, tidak ada data video, komentar, maupun riwayat penonton yang akan
-                  disimpan di database. Sistem langsung menghapus bersih semuanya.
+                  <strong className="font-semibold">Privasi Terjamin:</strong> Setelah live diakhiri,
+                  seluruh data video, komentar, dan penonton langsung dihapus bersih tanpa disimpan di database.
                 </p>
               </div>
             </div>
@@ -606,306 +621,449 @@ export const LiveStreamingModal: React.FC<Props> = ({
               <Radio className="w-4 h-4" /> Mulai Siaran Live Sekarang
             </button>
           </div>
-        ) : (
-          /* Live Streaming Active Viewport */
-          <div className="relative flex-1 w-full h-full flex flex-col md:flex-row overflow-hidden bg-black">
-            {/* Left/Main: Video Feed Area */}
-            <div className="relative flex-1 h-[55%] md:h-full bg-slate-900 flex items-center justify-center overflow-hidden">
-              {/* Actual Video Tag for Host Camera Stream */}
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted={isHost} // Mute self to prevent feedback loop
-                className={`w-full h-full object-cover ${!isCameraOn ? "hidden" : ""} ${
-                  cameraFacingMode === "user" ? "transform -scale-x-100" : ""
-                }`}
-              />
+        </div>
+      ) : (
+        /* ==================== TRUE FULL-SCREEN LIVE STREAMING ==================== */
+        <div className="relative w-full h-full overflow-hidden bg-black flex flex-col">
+          {/* 1. Full-screen Video Layer */}
+          <div className="absolute inset-0 w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden">
+            {/* Camera Video Feed */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted={isHost}
+              className={`absolute inset-0 w-full h-full object-cover ${!isCameraOn ? "hidden" : ""} ${
+                cameraFacingMode === "user" ? "transform -scale-x-100" : ""
+              }`}
+            />
 
-              {/* Visual Fallback / Animation when camera is loading or viewer mode */}
-              {!isCameraOn || (!videoRef.current?.srcObject && !isHost) ? (
-                <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-slate-900 via-emerald-950/30 to-slate-950 relative">
-                  <div className="relative mb-4">
-                    <img
-                      src={
-                        pinnedProduct?.photoUrl ||
-                        streamInfo?.hostAvatar ||
-                        currentUser.avatar
-                      }
-                      alt="Live Display"
-                      className="w-32 h-32 rounded-3xl object-cover border-4 border-rose-500 shadow-2xl animate-pulse"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent rounded-3xl" />
+            {/* Fallback / Animated Live Background when camera off or viewer mode */}
+            {(!isCameraOn || (!videoRef.current?.srcObject && !isHost)) && (
+              <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-emerald-950 overflow-hidden">
+                <div className="absolute inset-0 opacity-20 pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-rose-600 via-emerald-600 to-black animate-pulse" />
+                
+                <div className="relative mb-5 z-10">
+                  <img
+                    src={pinnedProduct?.photoUrl || streamInfo?.hostAvatar || currentUser.avatar}
+                    alt="Live Display"
+                    className="w-36 h-36 sm:w-44 sm:h-44 rounded-3xl object-cover border-4 border-rose-500 shadow-2xl shadow-rose-950/60"
+                  />
+                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider px-3 py-0.5 rounded-full shadow-lg flex items-center gap-1 shrink-0">
+                    <Radio className="w-3 h-3 animate-ping" /> SEDANG SIARAN
                   </div>
+                </div>
 
-                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-rose-600/20 border border-rose-500/40 rounded-full text-rose-300 text-xs font-bold mb-2">
-                    <Radio className="w-3.5 h-3.5 animate-ping" /> Siaran Langsung Sedang Berlangsung
-                  </div>
-                  <h4 className="text-white font-extrabold text-base max-w-sm">
+                <div className="z-10 max-w-md px-4">
+                  <h4 className="text-white font-black text-lg sm:text-xl drop-shadow-lg leading-snug">
                     {streamInfo?.title || streamTitle}
                   </h4>
-                  <p className="text-slate-400 text-xs mt-1">
+                  <p className="text-emerald-400 text-xs sm:text-sm font-semibold mt-1.5 drop-shadow">
                     Dipandu oleh {streamInfo?.hostName || currentUser.username}
                   </p>
+                  <p className="text-slate-400 text-[11px] mt-1">
+                    Suara dan komentar interaktif berjalan langsung secara real-time
+                  </p>
                 </div>
-              ) : null}
+              </div>
+            )}
 
-              {/* Host Floating Media Controls (Camera / Mic) */}
-              {isHost && isLiveActive && (
-                <div className="absolute bottom-4 left-4 z-30 flex items-center gap-2 bg-black/70 backdrop-blur-md p-1.5 rounded-2xl border border-white/10">
+            {/* Atmospheric Shadows for High Text Readability */}
+            <div className="absolute top-0 left-0 right-0 h-36 bg-gradient-to-b from-black/85 via-black/40 to-transparent pointer-events-none z-10" />
+            <div className="absolute bottom-0 left-0 right-0 h-80 bg-gradient-to-t from-black/95 via-black/60 to-transparent pointer-events-none z-10" />
+          </div>
+
+          {/* 2. Top Header Bar (With Scroll Mode if viewport is too narrow) */}
+          <div className="absolute top-0 left-0 right-0 z-30 pt-3 pb-2 px-3 sm:px-4 pointer-events-auto">
+            <div className="w-full flex items-center justify-between gap-2 overflow-x-auto scrollbar-none touch-scroll py-0.5">
+              {/* Host Info Capsule */}
+              <div className="flex items-center gap-2.5 bg-black/55 backdrop-blur-md border border-white/15 pl-1.5 pr-3 py-1.5 rounded-full shrink-0 shadow-lg max-w-[65%] sm:max-w-md">
+                <div className="relative shrink-0">
+                  <img
+                    src={streamInfo?.hostAvatar || currentUser.avatar}
+                    alt="Host Avatar"
+                    className="w-8 h-8 rounded-full object-cover border-2 border-rose-500 shadow-sm"
+                  />
+                  <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                  </span>
+                </div>
+
+                <div className="min-w-0 pr-1">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-black text-white leading-tight truncate">
+                      {streamInfo?.hostName || currentUser.username}
+                    </h3>
+                    <span className="bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded-full flex items-center gap-0.5 shrink-0">
+                      <Radio className="w-2.5 h-2.5 animate-pulse" /> LIVE
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-300 truncate">
+                    {streamInfo?.title || streamTitle}
+                  </p>
+                </div>
+              </div>
+
+              {/* Top Right Actions: Viewers Count & Close/End Button */}
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Viewers Pill */}
+                <div className="bg-black/55 backdrop-blur-md border border-white/15 px-2.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs text-white font-bold shadow-lg shrink-0">
+                  <Eye className="w-3.5 h-3.5 text-rose-400" />
+                  <span>{viewerCount}</span>
+                </div>
+
+                {/* End Live (for host) or Exit (for viewer) */}
+                {isHost && isLiveActive ? (
+                  <button
+                    type="button"
+                    onClick={handleEndLive}
+                    className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                    title="Akhiri Sesi Live"
+                  >
+                    Akhiri Live
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopCamera();
+                      if (wsRef.current) wsRef.current.close();
+                      onClose();
+                    }}
+                    className="p-2 bg-black/55 hover:bg-black/80 text-white rounded-full border border-white/20 transition-all cursor-pointer shrink-0 shadow-lg"
+                    title="Keluar dari Live"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* System Alert Notification */}
+          {systemAlert && (
+            <div className="absolute top-16 left-3 right-3 sm:left-4 sm:right-4 z-40">
+              <div className="bg-rose-950/95 border border-rose-500/60 text-white text-xs p-3 rounded-2xl shadow-2xl flex items-center gap-2 max-w-md mx-auto">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{systemAlert}</span>
+              </div>
+            </div>
+          )}
+
+          {/* 3. Pinned Product Banner (Floating cleanly below header) */}
+          {pinnedProduct && (
+            <div className="absolute top-16 left-3 sm:left-4 z-25 max-w-[280px] sm:max-w-xs bg-black/65 backdrop-blur-md border border-emerald-500/40 p-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-fade-in pointer-events-auto">
+              <img
+                src={pinnedProduct.photoUrl}
+                alt={pinnedProduct.title}
+                className="w-12 h-12 rounded-xl object-cover border border-emerald-500/40 shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1 text-[9px] text-emerald-400 font-bold uppercase tracking-wider">
+                  <Pin className="w-2.5 h-2.5" /> Disematkan
+                </div>
+                <p className="text-xs font-bold text-white truncate">{pinnedProduct.title}</p>
+                <p className="text-xs font-extrabold text-amber-400">{pinnedProduct.price}</p>
+              </div>
+
+              {isHost ? (
+                <button
+                  type="button"
+                  onClick={handleUnpinProduct}
+                  className="text-slate-400 hover:text-rose-400 p-1 shrink-0"
+                  title="Lepas Sematan"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              ) : (
+                pinnedProduct.id &&
+                onSelectProduct && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectProduct(pinnedProduct.id!);
+                    }}
+                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-xl shrink-0 cursor-pointer shadow-md"
+                  >
+                    Beli / Nego
+                  </button>
+                )
+              )}
+            </div>
+          )}
+
+          {/* 4. Real-time Live Comments Overlay: Tanpa Background agar Tidak Menghalangi Kamera */}
+          <div className="absolute bottom-24 sm:bottom-28 left-3 right-3 sm:right-auto sm:max-w-md pointer-events-none z-20 flex flex-col justify-end">
+            {/* Banner Komentar Disematkan (Pinned Comment by Host) */}
+            {pinnedComment && (
+              <div className="mb-2 p-2.5 rounded-2xl bg-black/60 backdrop-blur-md border border-amber-500/60 shadow-xl flex items-start justify-between gap-2.5 pointer-events-auto animate-fade-in max-w-[95%] sm:max-w-md">
+                <div className="flex items-start gap-2 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-amber-500/25 text-amber-400 shrink-0 mt-0.5">
+                    <Pin className="w-3.5 h-3.5 fill-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-400">
+                      <span>Komentar Disematkan</span>
+                    </div>
+                    <p className="text-white text-xs mt-0.5 leading-snug break-words">
+                      <strong className="text-amber-300 font-bold mr-1.5">{pinnedComment.senderName}:</strong>
+                      <span className="font-normal select-text">{pinnedComment.message}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={handleUnpinComment}
+                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-white/10 rounded-lg transition-all shrink-0 cursor-pointer"
+                    title="Lepas Sematan Komentar"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Aliran Komentar Live: Murni Tanpa Background Kotak/Pill */}
+            <div className="pointer-events-auto max-h-52 sm:max-h-72 overflow-y-auto scrollbar-none space-y-1 pr-2 touch-scroll flex flex-col">
+              {comments.length === 0 ? (
+                <div className="text-[11px] text-slate-200/90 font-medium py-1 [text-shadow:_0_1px_3px_rgba(0,0,0,0.95),_0_2px_6px_rgba(0,0,0,0.9)] max-w-fit">
+                  👋 Selamat datang di live streaming! Komentar Anda akan muncul di layar ini.
+                </div>
+              ) : (
+                comments.map((c) => {
+                  const isSystem = c.senderId === "system";
+                  if (isSystem) {
+                    return (
+                      <div
+                        key={c.id}
+                        className="inline-flex items-center gap-1.5 py-0.5 text-[11px] text-emerald-300 font-medium [text-shadow:_0_1px_3px_rgba(0,0,0,0.95),_0_2px_5px_rgba(0,0,0,0.9)]"
+                      >
+                        <span>{c.message}</span>
+                      </div>
+                    );
+                  }
+
+                  const isAuthorHost = streamInfo?.hostId === c.senderId;
+                  const isThisPinned = pinnedComment?.id === c.id;
+
+                  return (
+                    <div
+                      key={c.id}
+                      className="group flex items-start justify-between gap-2 py-0.5 max-w-[95%] sm:max-w-md animate-fade-in transition-all"
+                    >
+                      <div className="inline-flex items-baseline flex-wrap gap-1.5 text-xs [text-shadow:_0_1px_3px_rgba(0,0,0,0.98),_0_2px_6px_rgba(0,0,0,0.95)] leading-snug">
+                        <span
+                          className={`font-black tracking-tight shrink-0 ${
+                            isAuthorHost
+                              ? "text-amber-300 flex items-center gap-1"
+                              : "text-emerald-300"
+                          }`}
+                        >
+                          {c.senderName}
+                          {isAuthorHost && (
+                            <span className="text-[9px] bg-amber-500/40 text-amber-200 px-1 py-0.2 rounded font-extrabold uppercase ml-0.5">
+                              Host
+                            </span>
+                          )}
+                          :
+                        </span>
+                        <span className="text-white font-medium select-text">
+                          {c.message}
+                        </span>
+                      </div>
+
+                      {/* Tombol Sematkan Komentar Khusus Host */}
+                      {isHost && (
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePinComment(c)}
+                          className={`p-1 rounded-full text-[10px] transition-all cursor-pointer shrink-0 opacity-80 sm:opacity-0 group-hover:opacity-100 ${
+                            isThisPinned
+                              ? "bg-amber-500 text-black font-bold opacity-100 scale-110 shadow-lg"
+                              : "bg-black/50 hover:bg-amber-500 hover:text-black text-amber-300 border border-white/10"
+                          }`}
+                          title={isThisPinned ? "Lepas Sematan Komentar" : "Sematkan Komentar Ini"}
+                        >
+                          <Pin className={`w-3 h-3 ${isThisPinned ? "fill-black" : ""}`} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+              <div ref={commentsEndRef} />
+            </div>
+          </div>
+
+          {/* 5. Bottom Menus & Comment Input (Mode Scroll ensures screen is never broken) */}
+          <div className="absolute bottom-0 left-0 right-0 z-30 p-2.5 sm:p-3 pb-3 sm:pb-4 flex flex-col gap-2 pointer-events-auto">
+            {/* Mode Scroll Action Menus */}
+            <div className="w-full overflow-x-auto scrollbar-none touch-scroll py-0.5 flex items-center gap-2">
+              {/* Host Controls */}
+              {isHost && (
+                <>
                   <button
                     type="button"
                     onClick={toggleCamera}
-                    className={`p-2.5 rounded-xl transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md ${
                       isCameraOn
-                        ? "bg-slate-800 text-white hover:bg-slate-700"
+                        ? "bg-black/60 hover:bg-black/80 text-white border border-white/20"
                         : "bg-rose-600 text-white"
                     }`}
                     title={isCameraOn ? "Matikan Kamera" : "Nyalakan Kamera"}
                   >
-                    {isCameraOn ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
+                    {isCameraOn ? <Camera className="w-3.5 h-3.5" /> : <CameraOff className="w-3.5 h-3.5" />}
+                    <span>{isCameraOn ? "Kamera On" : "Kamera Off"}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleSwitchCamera}
                     disabled={!isCameraOn || isSwitchingCamera}
-                    className={`p-2.5 rounded-xl transition-all cursor-pointer ${
-                      isSwitchingCamera
-                        ? "bg-amber-600 text-white animate-pulse"
-                        : "bg-slate-800 text-teal-300 hover:bg-slate-700 hover:text-white"
-                    } disabled:opacity-50`}
-                    title={`Pindah ke kamera ${cameraFacingMode === "user" ? "belakang (objek batu)" : "depan (wajah)"}`}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-black/60 hover:bg-black/80 text-teal-300 border border-teal-500/30 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md disabled:opacity-50"
+                    title={`Pindah kamera (${cameraFacingMode === "user" ? "ke belakang" : "ke depan"})`}
                   >
-                    <SwitchCamera className={`w-4 h-4 ${isSwitchingCamera ? "animate-spin" : ""}`} />
+                    <SwitchCamera className={`w-3.5 h-3.5 ${isSwitchingCamera ? "animate-spin" : ""}`} />
+                    <span>{cameraFacingMode === "user" ? "Kamera Belakang" : "Kamera Depan"}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={toggleMic}
-                    className={`p-2.5 rounded-xl transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md ${
                       isMicOn
-                        ? "bg-slate-800 text-white hover:bg-slate-700"
+                        ? "bg-black/60 hover:bg-black/80 text-white border border-white/20"
                         : "bg-rose-600 text-white"
                     }`}
                     title={isMicOn ? "Matikan Mikrofon" : "Nyalakan Mikrofon"}
                   >
-                    {isMicOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+                    {isMicOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                    <span>{isMicOn ? "Mic On" : "Mic Off"}</span>
                   </button>
 
                   {userCatalogs.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setShowCatalogSelector(true)}
-                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md"
-                      title="Sematkan Produk Katalog"
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-md"
+                      title="Sematkan Batu Mulia"
                     >
                       <Pin className="w-3.5 h-3.5" />
                       <span>Sematkan Batu</span>
                     </button>
                   )}
-                </div>
+                </>
               )}
 
-              {/* Pinned Product Card Floating Banner */}
-              {pinnedProduct && (
-                <div className="absolute top-20 left-4 right-4 sm:right-auto sm:max-w-xs z-30 bg-slate-900/90 backdrop-blur-md border border-emerald-500/50 p-2.5 rounded-2xl shadow-2xl flex items-center gap-3 animate-fade-in">
-                  <img
-                    src={pinnedProduct.photoUrl}
-                    alt={pinnedProduct.title}
-                    className="w-14 h-14 rounded-xl object-cover border border-emerald-500/40 shrink-0"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
-                      <Pin className="w-3 h-3" /> Produk Disematkan
-                    </div>
-                    <p className="text-xs font-bold text-white truncate">{pinnedProduct.title}</p>
-                    <p className="text-xs font-extrabold text-amber-400">{pinnedProduct.price}</p>
-                  </div>
-
-                  {isHost ? (
-                    <button
-                      type="button"
-                      onClick={handleUnpinProduct}
-                      className="text-slate-400 hover:text-rose-400 p-1"
-                      title="Lepas Sematan"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    pinnedProduct.id &&
-                    onSelectProduct && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSelectProduct(pinnedProduct.id!);
-                        }}
-                        className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] rounded-lg shrink-0 cursor-pointer shadow-sm"
-                      >
-                        Beli / Nego
-                      </button>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Right/Bottom: Real-time Live Comments & Chat Section */}
-            <div className="w-full md:w-80 lg:w-96 h-[45%] md:h-full bg-slate-950/95 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between z-20">
-              {/* Header Comments */}
-              <div className="p-3 border-b border-slate-800/80 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-bold text-white">
-                  <MessageCircle className="w-4 h-4 text-emerald-400" />
-                  <span>Komentar Langsung Penonton</span>
-                </div>
-                <span className="text-[10px] text-slate-500">Live RAM Volatile</span>
-              </div>
-
-              {/* Comments Feed List */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-                {comments.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
-                    <Flame className="w-8 h-8 text-slate-600 mb-2" />
-                    <p className="text-xs">Belum ada komentar.</p>
-                    <p className="text-[11px] text-slate-600">
-                      Jadilah yang pertama menyapa atau menanyakan spesifikasi batu mulia!
-                    </p>
-                  </div>
-                ) : (
-                  comments.map((c) => {
-                    const isSystem = c.senderId === "system";
-                    if (isSystem) {
-                      return (
-                        <div
-                          key={c.id}
-                          className="bg-emerald-950/30 border border-emerald-900/50 rounded-lg px-2.5 py-1 text-[11px] text-emerald-400 text-center font-medium"
-                        >
-                          {c.message}
-                        </div>
-                      );
-                    }
-
-                    const isAuthorHost = streamInfo?.hostId === c.senderId;
-
-                    return (
-                      <div
-                        key={c.id}
-                        className="flex items-start gap-2 text-xs leading-relaxed animate-fade-in"
-                      >
-                        <img
-                          src={c.senderAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&auto=format&fit=crop&q=80"}
-                          alt={c.senderName}
-                          className="w-6 h-6 rounded-full object-cover border border-slate-700 shrink-0 mt-0.5"
-                        />
-                        <div className="bg-slate-900/80 rounded-xl px-2.5 py-1.5 border border-slate-800/70 max-w-[85%]">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <span
-                              className={`font-bold ${
-                                isAuthorHost ? "text-amber-400" : "text-slate-300"
-                              }`}
-                            >
-                              {c.senderName}
-                            </span>
-                            {isAuthorHost && (
-                              <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 rounded font-bold">
-                                Host
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-slate-100 text-xs break-words">{c.message}</p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={commentsEndRef} />
-              </div>
-
-              {/* Comment Input Box */}
-              <form
-                onSubmit={handleSendComment}
-                className="p-3 border-t border-slate-800 bg-slate-900/60 flex items-center gap-2"
-              >
-                <input
-                  type="text"
-                  value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
-                  placeholder="Kirim komentar atau ajukan pertanyaan..."
-                  className="flex-1 bg-slate-950 border border-slate-700 text-xs text-white px-3 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-slate-500"
-                  maxLength={150}
-                />
-                <button
-                  type="submit"
-                  disabled={!commentInput.trim()}
-                  className="p-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-xl transition-all cursor-pointer"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Modal Selector to Pin User Catalog */}
-        {showCatalogSelector && (
-          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh]">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Pin className="w-4 h-4 text-emerald-400" />
-                  Pilih Batu Mulia untuk Disematkan
-                </h3>
+              {/* Viewer Quick Action for Pinned Stone */}
+              {!isHost && pinnedProduct && pinnedProduct.id && onSelectProduct && (
                 <button
                   type="button"
-                  onClick={() => setShowCatalogSelector(false)}
-                  className="text-slate-400 hover:text-white p-1"
+                  onClick={() => onSelectProduct(pinnedProduct.id!)}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-lg"
                 >
-                  <X className="w-4 h-4" />
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>Beli Batu ({pinnedProduct.price})</span>
                 </button>
-              </div>
+              )}
 
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                {userCatalogs.length === 0 ? (
-                  <p className="text-xs text-slate-400 text-center py-6">
-                    Anda belum memiliki katalog batu mulia aktif di profil.
-                  </p>
-                ) : (
-                  userCatalogs.map((cat) => (
-                    <div
-                      key={cat.id}
-                      onClick={() => {
-                        if (isLiveActive) {
-                          handlePinProduct(cat);
-                        } else {
-                          setSelectedCatalogToPin(cat);
-                          setShowCatalogSelector(false);
-                        }
-                      }}
-                      className="flex items-center justify-between p-2.5 bg-slate-950 hover:bg-emerald-950/40 rounded-xl border border-slate-800 hover:border-emerald-500/50 cursor-pointer transition-all"
-                    >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={cat.images?.[0] || ""}
-                          alt={cat.gemType}
-                          className="w-12 h-12 rounded-lg object-cover border border-slate-700"
-                        />
-                        <div>
-                          <p className="text-xs font-bold text-white">{cat.gemType}</p>
-                          <p className="text-xs font-extrabold text-emerald-400">{cat.price}</p>
-                          <p className="text-[10px] text-slate-500">{cat.dimensions}</p>
-                        </div>
+              {/* Reaction Heart Button */}
+              <button
+                type="button"
+                onClick={handleSendReaction}
+                className="px-3 py-1.5 bg-black/60 hover:bg-rose-950/80 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-md"
+                title="Beri Like / Suka"
+              >
+                <Flame className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse" />
+                <span>Suka</span>
+              </button>
+            </div>
+
+            {/* Live Comment Input Box */}
+            <form onSubmit={handleSendComment} className="w-full flex items-center gap-2">
+              <input
+                type="text"
+                value={commentInput}
+                onChange={(e) => setCommentInput(e.target.value)}
+                placeholder="Tulis komentar langsung di live..."
+                className="flex-1 bg-black/60 backdrop-blur-md border border-white/20 text-xs sm:text-sm text-white px-3.5 py-2.5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-400 shadow-xl"
+                maxLength={150}
+              />
+              <button
+                type="submit"
+                disabled={!commentInput.trim()}
+                className="p-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white rounded-2xl shadow-xl transition-all cursor-pointer shrink-0"
+                title="Kirim Komentar"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Selector to Pin User Catalog (Scrollable) */}
+      {showCatalogSelector && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-3xl p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Pin className="w-4 h-4 text-emerald-400" />
+                Pilih Batu Mulia untuk Disematkan
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCatalogSelector(false)}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-none touch-scroll">
+              {userCatalogs.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6">
+                  Anda belum memiliki batu mulia aktif di katalog profil Anda.
+                </p>
+              ) : (
+                userCatalogs.map((cat) => (
+                  <div
+                    key={cat.id}
+                    onClick={() => {
+                      if (isLiveActive) {
+                        handlePinProduct(cat);
+                      } else {
+                        setSelectedCatalogToPin(cat);
+                        setShowCatalogSelector(false);
+                      }
+                    }}
+                    className="flex items-center justify-between p-2.5 bg-slate-950 hover:bg-emerald-950/40 rounded-2xl border border-slate-800 hover:border-emerald-500/50 cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={cat.images?.[0] || ""}
+                        alt={cat.gemType}
+                        className="w-12 h-12 rounded-xl object-cover border border-slate-700 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{cat.gemType}</p>
+                        <p className="text-xs font-extrabold text-emerald-400">{cat.price}</p>
+                        <p className="text-[10px] text-slate-500">{cat.dimensions}</p>
                       </div>
-                      <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                        Pilih
-                      </span>
                     </div>
-                  ))
-                )}
-              </div>
+                    <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-xl border border-emerald-500/30 shrink-0">
+                      Pilih
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

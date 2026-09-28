@@ -11,6 +11,7 @@ import {
   endStreamSession,
   addCommentToStream,
   updatePinnedProduct,
+  updatePinnedComment,
   addViewerToStream,
   removeViewerFromStream,
 } from "./server/liveStreamManager.ts";
@@ -2586,6 +2587,7 @@ async function startServer() {
         hostAvatar: stream.hostAvatar,
         title: stream.title,
         pinnedProduct: stream.pinnedProduct,
+        pinnedComment: stream.pinnedComment || null,
         startedAt: stream.startedAt,
         viewerCount: stream.viewers.size,
         comments: stream.comments,
@@ -2677,6 +2679,28 @@ async function startServer() {
     return res.json({ success: true, product });
   });
 
+  // 6. Pin / Unpin comment in live stream
+  app.post("/api/live/pin-comment", (req, res) => {
+    const { streamId, hostId, comment } = req.body;
+    const session = getStreamSession(streamId);
+    if (!session) {
+      return res.status(404).json({ success: false, message: "Stream tidak ditemukan." });
+    }
+    if (session.hostId !== hostId) {
+      return res.status(403).json({ success: false, message: "Hanya host yang dapat menyematkan komentar." });
+    }
+
+    updatePinnedComment(streamId, comment || null);
+
+    broadcastToLiveRoom(streamId, {
+      type: "comment_pinned",
+      streamId,
+      comment: comment || null,
+    });
+
+    return res.json({ success: true, comment: comment || null });
+  });
+
   // Create HTTP Server to attach both Express and WebSocket Server
   const server = http.createServer(app);
 
@@ -2754,6 +2778,7 @@ async function startServer() {
                   hostAvatar: session.hostAvatar,
                   title: session.title,
                   pinnedProduct: session.pinnedProduct,
+                  pinnedComment: session.pinnedComment || null,
                   startedAt: session.startedAt,
                   viewerCount,
                   comments: session.comments,
@@ -2792,6 +2817,21 @@ async function startServer() {
                 comment: savedComment,
               });
             }
+            break;
+          }
+
+          case "pin_comment": {
+            if (!currentStreamId) return;
+            const session = getStreamSession(currentStreamId);
+            if (!session) return;
+            if (currentUser?.id !== session.hostId) return;
+            const { comment } = data;
+            updatePinnedComment(currentStreamId, comment || null);
+            broadcastToLiveRoom(currentStreamId, {
+              type: "comment_pinned",
+              streamId: currentStreamId,
+              comment: comment || null,
+            });
             break;
           }
 

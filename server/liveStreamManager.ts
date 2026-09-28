@@ -26,6 +26,7 @@ export interface LiveStreamSession {
   hostAvatar: string;
   title: string;
   pinnedProduct?: LivePinnedProduct | null;
+  pinnedComment?: LiveStreamComment | null;
   startedAt: number;
   comments: LiveStreamComment[];
   // Viewers currently connected (userId -> metadata)
@@ -45,6 +46,7 @@ export function getActiveStreamsSummary() {
       hostAvatar: stream.hostAvatar,
       title: stream.title,
       pinnedProduct: stream.pinnedProduct,
+      pinnedComment: stream.pinnedComment,
       startedAt: stream.startedAt,
       viewerCount: stream.viewers.size,
     });
@@ -78,6 +80,7 @@ export function createStreamSession(params: {
     hostAvatar: params.hostAvatar,
     title: params.title || "Live Jual Beli Batu Mulia",
     pinnedProduct: params.pinnedProduct || null,
+    pinnedComment: null,
     startedAt: Date.now(),
     comments: [],
     viewers: new Map(),
@@ -95,6 +98,7 @@ export function endStreamSession(streamId: string): boolean {
       stream.comments.length = 0;
       stream.viewers.clear();
       stream.pinnedProduct = null;
+      stream.pinnedComment = null;
     }
     activeStreams.delete(streamId);
     return true;
@@ -131,6 +135,13 @@ export function updatePinnedProduct(streamId: string, product: LivePinnedProduct
   const stream = activeStreams.get(streamId);
   if (!stream) return false;
   stream.pinnedProduct = product;
+  return true;
+}
+
+export function updatePinnedComment(streamId: string, comment: LiveStreamComment | null): boolean {
+  const stream = activeStreams.get(streamId);
+  if (!stream) return false;
+  stream.pinnedComment = comment;
   return true;
 }
 

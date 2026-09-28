@@ -187,6 +187,7 @@ export interface LiveStreamSummary {
   hostAvatar: string;
   title: string;
   pinnedProduct?: LivePinnedProduct | null;
+  pinnedComment?: LiveStreamComment | null;
   startedAt: number;
   viewerCount: number;
 }
